@@ -1,0 +1,160 @@
+{
+  "_comment": "LegadoZero — Mock Vault para demo UI. Cambia 'activeState' para probar cada estado.",
+  "activeState": "active",
+
+  "states": {
+    "active": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "user_email": "demo@legadozero.com",
+      "is_paid": true,
+      "status": "active",
+      "last_pulse_at": "2025-06-08T10:00:00Z",
+      "created_at": "2025-01-01T00:00:00Z",
+      "days_remaining": 22,
+      "hours_remaining": 6,
+      "minutes_remaining": 14,
+      "alert_level": "normal",
+      "storage_used_bytes": 268435456,
+      "storage_limit_bytes": 1073741824,
+      "heirs": [
+        {
+          "id": "h1",
+          "name": "María García López",
+          "email": "maria.garcia@email.com",
+          "whatsapp": "+573001234567"
+        },
+        {
+          "id": "h2",
+          "name": "Carlos Andrés Martínez",
+          "email": "carlos.martinez@email.com",
+          "whatsapp": "+5491123456789"
+        }
+      ],
+      "files": [
+        { "id": "f1", "name": "contrasenas_importantes.kdbx", "size": 45312, "type": "application/octet-stream" },
+        { "id": "f2", "name": "escritura_casa.pdf", "size": 2341120, "type": "application/pdf" },
+        { "id": "f3", "name": "foto_familia.jpg", "size": 3145728, "type": "image/jpeg" }
+      ],
+      "has_testament": true,
+      "glm_summary": null
+    },
+
+    "warning": {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "user_email": "demo@legadozero.com",
+      "is_paid": true,
+      "status": "active",
+      "last_pulse_at": "2025-05-25T08:30:00Z",
+      "created_at": "2025-01-01T00:00:00Z",
+      "days_remaining": 7,
+      "hours_remaining": 3,
+      "minutes_remaining": 42,
+      "alert_level": "warning",
+      "storage_used_bytes": 536870912,
+      "storage_limit_bytes": 1073741824,
+      "heirs": [
+        {
+          "id": "h1",
+          "name": "María García López",
+          "email": "maria.garcia@email.com",
+          "whatsapp": "+573001234567"
+        }
+      ],
+      "files": [
+        { "id": "f1", "name": "documentos_legales.zip", "size": 52428800, "type": "application/zip" }
+      ],
+      "has_testament": true,
+      "glm_summary": null
+    },
+
+    "critical": {
+      "id": "550e8400-e29b-41d4-a716-446655440002",
+      "user_email": "demo@legadozero.com",
+      "is_paid": true,
+      "status": "active",
+      "last_pulse_at": "2025-05-01T12:00:00Z",
+      "created_at": "2025-01-01T00:00:00Z",
+      "days_remaining": 1,
+      "hours_remaining": 11,
+      "minutes_remaining": 5,
+      "alert_level": "critical",
+      "storage_used_bytes": 805306368,
+      "storage_limit_bytes": 1073741824,
+      "heirs": [
+        {
+          "id": "h1",
+          "name": "María García López",
+          "email": "maria.garcia@email.com",
+          "whatsapp": "+573001234567"
+        },
+        {
+          "id": "h2",
+          "name": "Carlos Andrés Martínez",
+          "email": "carlos.martinez@email.com",
+          "whatsapp": "+5491123456789"
+        },
+        {
+          "id": "h3",
+          "name": "Ana Lucía Rodríguez",
+          "email": "ana.rodriguez@email.com",
+          "whatsapp": "+5215512345678"
+        }
+      ],
+      "files": [
+        { "id": "f1", "name": "testamento_firmado.pdf", "size": 524288, "type": "application/pdf" },
+        { "id": "f2", "name": "cuentas_bancarias.xlsx", "size": 28672, "type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+      ],
+      "has_testament": true,
+      "glm_summary": null
+    },
+
+    "released": {
+      "id": "550e8400-e29b-41d4-a716-446655440003",
+      "user_email": "demo@legadozero.com",
+      "is_paid": true,
+      "status": "triggered",
+      "last_pulse_at": "2025-04-01T00:00:00Z",
+      "created_at": "2025-01-01T00:00:00Z",
+      "days_remaining": 0,
+      "hours_remaining": 0,
+      "minutes_remaining": 0,
+      "alert_level": "released",
+      "triggered_at": "2025-05-31T00:00:00Z",
+      "storage_used_bytes": 322122547,
+      "storage_limit_bytes": 1073741824,
+      "heirs": [
+        {
+          "id": "h1",
+          "name": "María García López",
+          "email": "maria.garcia@email.com",
+          "whatsapp": "+573001234567",
+          "notified_at": "2025-05-31T00:01:00Z"
+        }
+      ],
+      "files": [
+        { "id": "f1", "name": "documentos_importantes.pdf", "size": 1048576, "type": "application/pdf" }
+      ],
+      "has_testament": true,
+      "glm_summary": "El titular dejó instrucciones detalladas sobre la distribución de sus activos digitales y documentos personales. El testamento incluye mensajes para sus seres queridos y credenciales de acceso a sus cuentas principales."
+    },
+
+    "unpaid": {
+      "id": "550e8400-e29b-41d4-a716-446655440004",
+      "user_email": "demo@legadozero.com",
+      "is_paid": false,
+      "status": "active",
+      "last_pulse_at": null,
+      "created_at": "2025-06-01T00:00:00Z",
+      "days_remaining": null,
+      "hours_remaining": null,
+      "minutes_remaining": null,
+      "alert_level": "unpaid",
+      "storage_used_bytes": 0,
+      "storage_limit_bytes": 1073741824,
+      "heirs": [],
+      "files": [],
+      "has_testament": false,
+      "glm_summary": null
+    }
+  }
+}

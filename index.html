@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+  <!-- ── Dynamic Title (updated by JS based on vault state) ── -->
+  <title>🔒 LegadoZero | Bóveda Activa &amp; Asegurada</title>
+
+  <!-- ── PWA Manifest ── -->
+  <link rel="manifest" href="/manifest.json" />
+
+  <!-- ── Favicon (emoji fallback + real icon) ── -->
+  <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="/icons/icon-512.png" />
+
+  <!-- ── Theme ── -->
+  <meta name="theme-color" content="#020617" />
+  <meta name="msapplication-TileColor" content="#020617" />
+  <meta name="background-color" content="#020617" />
+
+  <!-- ── iOS PWA ── -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LegadoZero" />
+
+  <!-- ── Open Graph ── -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="LegadoZero" />
+  <meta property="og:title" content="LegadoZero - Custodia Criptográfica de Legados Digitales" />
+  <meta property="og:description" content="Asegura tus activos digitales, contraseñas y últimas voluntades bajo cifrado de grado militar. Tu información solo se liberará si tú faltas." />
+  <meta property="og:image" content="/og-image.png" />
+  <meta property="og:url" content="https://legadozero.com" />
+
+  <!-- ── Twitter Card ── -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="LegadoZero - Custodia Criptográfica de Legados Digitales" />
+  <meta name="twitter:description" content="Asegura tus activos digitales, contraseñas y últimas voluntades bajo cifrado de grado militar. Tu información solo se liberará si tú faltas." />
+  <meta name="twitter:image" content="/og-image.png" />
+
+  <!-- ── SEO ── -->
+  <meta name="description" content="Asegura tus activos digitales, contraseñas y últimas voluntades bajo cifrado de grado militar AES-256. Interruptor de hombre muerto (Dead Man's Switch). Pago único $10 USD." />
+  <meta name="keywords" content="legado digital, testamento digital, cifrado, criptografía, dead man switch, bóveda digital, herencia digital" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://legadozero.com" />
+
+  <!-- ── Security Headers via meta ── -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="X-Frame-Options" content="DENY" />
+
+  <!-- ── Preload critical fonts ── -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+
+  <style>
+    /* Critical CSS — prevents flash of unstyled content */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { min-height: 100vh; }
+    body {
+      background-color: #020617;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    /* Loading placeholder */
+    #root:empty::after {
+      content: '';
+      display: block;
+      width: 48px; height: 48px;
+      border: 3px solid #334155;
+      border-top-color: #7c3aed;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- ── Dynamic title updater ── -->
+  <script>
+    // Update <title> based on vault state stored in localStorage
+    (function() {
+      const state = localStorage.getItem('lz_alert_level') || 'normal';
+      const titles = {
+        normal:   '🔒 LegadoZero | Bóveda Activa & Asegurada',
+        warning:  '⚠️ LegadoZero | Se requiere confirmación de vida',
+        critical: '🚨 [ACCIÓN REQUERIDA] Asegura tu Legado | LegadoZero',
+        released: '📬 LegadoZero | Protocolo de Herencia Activado',
+        unpaid:   '🔓 LegadoZero | Activa tu Bóveda',
+      };
+      document.title = titles[state] || titles.normal;
+    })();
+
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
+  </script>
+
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
