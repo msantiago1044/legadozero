@@ -1,36 +1,50 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect } from "react";
+import LandingPage from "./pages/LandingPage";
+import AuthPage from "./pages/AuthPage";
+import AdminPanel from "./pages/AdminPanel";
 import {
-  Shield, ShieldAlert, ShieldOff, Heart, Upload, FileText,
+  Shield, ShieldOff, Heart, Upload, FileText,
   Users, Download, Lock, Unlock, AlertTriangle, CheckCircle,
-  Trash2, Plus, Eye, EyeOff, Zap, Clock, HardDrive, Globe,
-  ChevronRight, X, Loader2, Sparkles
+  Trash2, Plus, Eye, EyeOff, Zap, HardDrive,
+  ChevronRight, X, Loader2, Sparkles, LogOut
 } from "lucide-react";
 import {
-  deriveKey, encryptVaultPayload, decryptVaultPayload,
-  encryptFile, decryptFile, generateSalt, bufferToBase64,
-  base64ToBuffer, checkBiometricSupport
+  encryptVaultPayload, encryptFile, bufferToBase64, base64ToBuffer
 } from "./lib/crypto";
-import { useTranslation } from "./i18n/translations";
+import { detectLanguage } from "./i18n/translations";
 import mockData from "./lib/mockVault.json";
 
-// ─── Constants ────────────────────────────────────────────────────
-const STORAGE_LIMIT = 1073741824; // 1 GB
-const MAX_HEIRS = 19;
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_URL  = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const LEMON_LINK = import.meta.env.VITE_LEMON_CHECKOUT_URL;
-const GLM_API_KEY = import.meta.env.VITE_GLM_API_KEY;
-const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+const LEMON_LINK    = import.meta.env.VITE_LEMON_CHECKOUT_URL;
+const GLM_API_KEY   = import.meta.env.VITE_GLM_API_KEY;
+const IS_DEMO       = import.meta.env.VITE_DEMO_MODE === "true";
+const ADMIN_EMAILS  = (import.meta.env.VITE_ADMIN_EMAILS || "").split(",").map(e => e.trim().toLowerCase());
+const STORAGE_LIMIT = 1073741824;
+const MAX_HEIRS     = 19;
+const gold          = "#C8982A";
 
-// ─── Helpers ──────────────────────────────────────────────────────
 function formatBytes(b) {
-  if (b < 1024) return `${b} B`;
-  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
-  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
-  return `${(b / 1073741824).toFixed(2)} GB`;
+  if (!b) return "0 B";
+  if (b < 1048576)    return `${(b/1024).toFixed(1)} KB`;
+  if (b < 1073741824) return `${(b/1048576).toFixed(1)} MB`;
+  return `${(b/1073741824).toFixed(2)} GB`;
 }
+function pad(n) { return String(n).padStart(2,"0"); }
 
-function pad(n) { return String(n).padStart(2, "0"); }
+async function supaFetch(path, options = {}) {
+  const token = localStorage.getItem("lz_token");
+  const res = await fetch(`${SUPABASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  return res.json();
+}
 
 function getVaultState(vault) {
   if (!vault?.is_paid) return "unpaid";
@@ -38,918 +52,386 @@ function getVaultState(vault) {
   return vault.alert_level || "normal";
 }
 
-// ─── App Entry ────────────────────────────────────────────────────
 export default function App() {
-  const { t, tr, lang } = useTranslation();
+  const lang = detectLanguage();
   const path = window.location.pathname;
   const heirMatch = path.match(/^\/boveda\/descifrar\/([a-f0-9-]{36})$/i);
-
-  if (heirMatch) return <HeirDecryptView vaultId={heirMatch[1]} t={t} tr={tr} />;
-  return <OwnerDashboard t={t} tr={tr} lang={lang} />;
+  if (heirMatch) return <HeirDecryptView vaultId={heirMatch[1]} lang={lang} />;
+  return <MainApp lang={lang} />;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  OWNER DASHBOARD
-// ═══════════════════════════════════════════════════════════════════
-function OwnerDashboard({ t, tr, lang }) {
-  const [vault, setVault] = useState(null);
-  const [tab, setTab] = useState("pulse");
-  const [loading, setLoading] = useState(true);
-  const [masterPassword, setMasterPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [unlocked, setUnlocked] = useState(false);
-  const [pulseMsg, setPulseMsg] = useState("");
-  const [pulsing, setPulsing] = useState(false);
-  const [demoState, setDemoState] = useState("active");
+function MainApp({ lang }) {
+  const [screen, setScreen] = useState("loading");
+  const [user,   setUser]   = useState(null);
 
   useEffect(() => {
-    loadVault();
-  }, [demoState]);
+    const stored = localStorage.getItem("lz_user");
+    const token  = localStorage.getItem("lz_token");
+    if (stored && token) {
+      const u = JSON.parse(stored);
+      setUser(u);
+      setScreen(ADMIN_EMAILS.includes(u.email?.toLowerCase()) ? "admin" : "dashboard");
+    } else {
+      setScreen("landing");
+    }
+  }, []);
+
+  function handleAuth(u) {
+    setUser(u);
+    setScreen(ADMIN_EMAILS.includes(u?.email?.toLowerCase()) ? "admin" : "dashboard");
+    document.title = "🔒 LegadoZero | Bóveda Activa & Asegurada";
+  }
+
+  function handleSignOut() {
+    ["lz_token","lz_user","lz_alert_level"].forEach(k=>localStorage.removeItem(k));
+    setUser(null);
+    setScreen("landing");
+  }
+
+  if (screen === "loading")   return <FullScreenLoader />;
+  if (screen === "landing")   return <LandingPage lang={lang} onGoToAuth={() => setScreen("auth")} />;
+  if (screen === "auth")      return <AuthPage lang={lang} onBack={() => setScreen("landing")} onAuth={handleAuth} />;
+  if (screen === "admin")     return <AdminPanel user={user} lang={lang} onSignOut={handleSignOut} />;
+  return <Dashboard user={user} lang={lang} onSignOut={handleSignOut} />;
+}
+
+function StatusBadge({ state, es }) {
+  const cfg = {
+    normal:   { bg:"rgba(92,184,144,0.1)",  border:"rgba(92,184,144,0.25)",  color:"#5cb890", label: es?"Bóveda Activa":"Vault Active" },
+    warning:  { bg:"rgba(200,152,42,0.1)",  border:"rgba(200,152,42,0.25)",  color:gold,      label: es?"Confirmar identidad":"Confirm identity" },
+    critical: { bg:"rgba(220,60,60,0.1)",   border:"rgba(220,60,60,0.25)",   color:"#e06060", label: es?"¡Acción requerida!":"Action required!" },
+    released: { bg:"rgba(120,120,130,0.1)", border:"rgba(120,120,130,0.25)", color:"#8a7868", label: es?"Bóveda Liberada":"Vault Released" },
+    unpaid:   { bg:"rgba(200,152,42,0.08)", border:"rgba(200,152,42,0.2)",   color:gold,      label: es?"Sin activar":"Not activated" },
+  };
+  const c = cfg[state] || cfg.normal;
+  return (
+    <span style={{ padding:"5px 12px", borderRadius:20, fontSize:12, fontFamily:"sans-serif", background:c.bg, border:`1px solid ${c.border}`, color:c.color }}>
+      {c.label}
+    </span>
+  );
+}
+
+function Dashboard({ user, lang, onSignOut }) {
+  const [vault,      setVault]     = useState(null);
+  const [tab,        setTab]       = useState("pulse");
+  const [loading,    setLoading]   = useState(true);
+  const [demoState,  setDemoState] = useState("active");
+  const [pulseMsg,   setPulseMsg]  = useState("");
+  const [pulsing,    setPulsing]   = useState(false);
+  const es = lang !== "en";
+
+  useEffect(() => { loadVault(); }, [demoState]);
 
   async function loadVault() {
     setLoading(true);
     if (IS_DEMO) {
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r,500));
       setVault(mockData.states[demoState]);
     } else {
-      // Real Supabase fetch
       try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/vaults?select=*&limit=1`, {
-          headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` },
-        });
-        const data = await res.json();
-        setVault(data[0] || null);
+        const data = await supaFetch("/rest/v1/vaults?select=*&limit=1");
+        setVault(Array.isArray(data) ? data[0] : null);
       } catch { setVault(null); }
     }
     setLoading(false);
   }
 
   async function handlePulse() {
-    setPulsing(true);
-    setPulseMsg("");
+    setPulsing(true); setPulseMsg("");
     try {
-      if (!IS_DEMO) {
-        await fetch(`${SUPABASE_URL}/rest/v1/rpc/renew_pulse`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: SUPABASE_ANON,
-            Authorization: `Bearer ${SUPABASE_ANON}`,
-          },
-          body: JSON.stringify({ p_vault_id: vault.id }),
-        });
-      }
-      setPulseMsg(t.pulse.confirmed);
-      setVault(v => ({ ...v, last_pulse_at: new Date().toISOString(), days_remaining: 60, alert_level: "normal" }));
-    } catch { setPulseMsg("Error al renovar pulso. Intenta de nuevo."); }
+      if (!IS_DEMO) await supaFetch("/rest/v1/rpc/renew_pulse",{ method:"POST", body:JSON.stringify({ p_vault_id:vault.id }) });
+      setPulseMsg(es?"✓ Pulso renovado. Bóveda asegurada.":"✓ Pulse renewed. Vault secured.");
+      setVault(v=>({...v, last_pulse_at:new Date().toISOString(), alert_level:"normal"}));
+      document.title = "🔒 LegadoZero | Bóveda Activa & Asegurada";
+    } catch { setPulseMsg(es?"Error al renovar pulso.":"Error renewing pulse."); }
     setPulsing(false);
   }
 
-  if (loading) return <LoadingScreen t={t} />;
+  const state   = getVaultState(vault);
+  const isCrit  = state === "critical";
+  const isRel   = state === "released";
+  const isUnpaid= state === "unpaid";
 
-  const vaultState = getVaultState(vault);
-  const isCritical = vaultState === "critical";
-  const isReleased = vaultState === "released";
+  useEffect(() => {
+    const titles = { normal:"🔒 LegadoZero | Bóveda Activa & Asegurada", warning:"⚠️ LegadoZero | Se requiere confirmación", critical:"🚨 [ACCIÓN REQUERIDA] LegadoZero", released:"📬 LegadoZero | Protocolo Activado", unpaid:"🔓 LegadoZero | Activa tu Bóveda" };
+    document.title = titles[state] || titles.normal;
+    localStorage.setItem("lz_alert_level", state);
+  }, [state]);
+
+  if (loading) return <FullScreenLoader />;
 
   return (
-    <div className={`min-h-screen font-sans transition-colors duration-500 ${
-      isCritical ? "bg-red-950" : isReleased ? "bg-slate-950" : "bg-slate-950"
-    }`}>
-      {/* Ambient glow for critical */}
-      {isCritical && (
-        <div className="fixed inset-0 pointer-events-none">
-          <div className="absolute inset-0 bg-red-900/20 animate-pulse" />
-        </div>
-      )}
+    <div style={{ minHeight:"100vh", background:"#0a0a0f", color:"#e8e4dc", fontFamily:"Georgia,'Times New Roman',serif" }}>
+      {isCrit && <div style={{ position:"fixed", inset:0, pointerEvents:"none", background:"rgba(180,20,20,0.04)", animation:"critPulse 3s ease-in-out infinite", zIndex:0 }}/>}
 
-      {/* ── Header ── */}
-      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-xl ${
-              isCritical ? "bg-red-500/20" : isReleased ? "bg-slate-700/40" : "bg-violet-500/20"
-            }`}>
-              {isReleased ? (
-                <ShieldOff size={22} className="text-slate-400" />
-              ) : isCritical ? (
-                <ShieldAlert size={22} className="text-red-400" />
-              ) : (
-                <Shield size={22} className="text-violet-400" />
-              )}
+      <header style={{ position:"sticky", top:0, zIndex:50, background:"rgba(10,10,15,0.97)", borderBottom:"1px solid rgba(180,160,120,0.12)", backdropFilter:"blur(12px)" }}>
+        <div style={{ maxWidth:960, margin:"0 auto", padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", height:64 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ width:34, height:34, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             </div>
             <div>
-              <h1 className="text-white font-bold text-lg tracking-tight">LegadoZero</h1>
-              <p className="text-slate-500 text-xs">{t.tagline}</p>
+              <div style={{ fontSize:16, fontWeight:700, color:gold }}>LegadoZero</div>
+              <div style={{ fontSize:10, color:"#6a6058", fontFamily:"sans-serif", letterSpacing:"1px", textTransform:"uppercase" }}>Custodia Digital</div>
             </div>
           </div>
-
-          {/* Demo state switcher */}
-          {IS_DEMO && (
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 text-xs">Demo:</span>
-              {["active","warning","critical","released","unpaid"].map(s => (
-                <button
-                  key={s}
-                  onClick={() => setDemoState(s)}
-                  className={`px-2 py-1 rounded text-xs font-medium transition-all ${
-                    demoState === s
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
-                  }`}
-                >{s}</button>
-              ))}
-            </div>
-          )}
-
-          <StatusBadge state={vaultState} t={t} />
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            {IS_DEMO && (
+              <div style={{ display:"flex", gap:3 }}>
+                {["active","warning","critical","released","unpaid"].map(s=>(
+                  <button key={s} onClick={()=>setDemoState(s)} style={{ padding:"3px 7px", borderRadius:4, border:"none", cursor:"pointer", fontSize:10, fontFamily:"sans-serif", background:demoState===s?gold:"rgba(255,255,255,0.06)", color:demoState===s?"#0a0a0f":"#8a7868" }}>{s}</button>
+                ))}
+              </div>
+            )}
+            <StatusBadge state={state} es={es}/>
+            <button onClick={onSignOut} style={{ display:"flex", alignItems:"center", gap:5, background:"none", border:"none", color:"#6a6058", cursor:"pointer", fontSize:13, fontFamily:"sans-serif" }}
+              onMouseEnter={e=>e.currentTarget.style.color="#e06060"} onMouseLeave={e=>e.currentTarget.style.color="#6a6058"}>
+              <LogOut size={14}/>{es?"Salir":"Sign out"}
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* ── Unpaid banner ── */}
-      {vaultState === "unpaid" && (
-        <div className="bg-amber-500/10 border-b border-amber-500/30">
-          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-            <p className="text-amber-400 text-sm">{t.payment.readonlyBanner}</p>
-            <PaymentButton t={t} vaultId={vault?.id} />
-          </div>
+      {isUnpaid && (
+        <div style={{ background:"rgba(200,152,42,0.07)", borderBottom:"1px solid rgba(200,152,42,0.18)", padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <p style={{ margin:0, fontSize:14, color:gold, fontFamily:"sans-serif" }}>{es?"Bóveda en modo lectura. Activa el servicio para proteger tu legado.":"Vault in read-only mode. Activate to protect your legacy."}</p>
+          <a href={`${LEMON_LINK}?checkout[custom][vault_id]=${vault?.id||""}`} target="_blank" rel="noopener noreferrer"
+            style={{ padding:"9px 20px", background:gold, color:"#0a0a0f", borderRadius:6, fontSize:13, fontWeight:600, textDecoration:"none", fontFamily:"sans-serif" }}>
+            {es?"Activar — $10 USD":"Activate — $10 USD"}
+          </a>
         </div>
       )}
 
-      <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        {/* ── Released State ── */}
-        {isReleased && <ReleasedBanner vault={vault} t={t} />}
+      <main style={{ maxWidth:960, margin:"0 auto", padding:"40px 24px", position:"relative", zIndex:1 }}>
+        {isRel && <ReleasedBanner vault={vault} es={es}/>}
+        {!isRel && <PulseWidget vault={vault} es={es} onPulse={handlePulse} pulsing={pulsing} pulseMsg={pulseMsg} isCrit={isCrit}/>}
 
-        {/* ── Pulse Widget ── */}
-        {!isReleased && (
-          <PulseWidget
-            vault={vault}
-            t={t}
-            tr={tr}
-            onPulse={handlePulse}
-            pulsing={pulsing}
-            pulseMsg={pulseMsg}
-            isCritical={isCritical}
-          />
-        )}
-
-        {/* ── Tabs ── */}
-        {!isReleased && vault?.is_paid && (
+        {!isRel && vault?.is_paid && (
           <>
-            <div className="flex gap-1 p-1 bg-slate-900 rounded-xl border border-slate-800">
-              {[
-                { id: "vault", icon: Lock, label: t.nav.vault },
-                { id: "heirs", icon: Users, label: t.nav.heirs },
-              ].map(({ id, icon: Icon, label }) => (
-                <button
-                  key={id}
-                  onClick={() => setTab(id)}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    tab === id
-                      ? "bg-violet-600 text-white shadow-lg shadow-violet-500/20"
-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
-                  }`}
-                >
-                  <Icon size={16} />
-                  {label}
+            <div style={{ display:"flex", gap:4, padding:4, background:"rgba(255,255,255,0.03)", borderRadius:10, border:"1px solid rgba(180,160,120,0.1)", marginTop:32, marginBottom:32 }}>
+              {[{id:"pulse",icon:Heart,label:es?"Pulso":"Pulse"},{id:"vault",icon:Lock,label:es?"Mi Bóveda":"My Vault"},{id:"heirs",icon:Users,label:es?"Herederos":"Heirs"}].map(({id,icon:Icon,label})=>(
+                <button key={id} onClick={()=>setTab(id)} style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px", borderRadius:8, border:"none", cursor:"pointer", fontSize:14, fontFamily:"sans-serif", transition:"all 0.15s", background:tab===id?gold:"transparent", color:tab===id?"#0a0a0f":"#8a7868", fontWeight:tab===id?600:400 }}>
+                  <Icon size={15}/>{label}
                 </button>
               ))}
             </div>
-
-            {tab === "vault" && (
-              <VaultTab
-                vault={vault}
-                t={t}
-                masterPassword={masterPassword}
-                setMasterPassword={setMasterPassword}
-                showPassword={showPassword}
-                setShowPassword={setShowPassword}
-                unlocked={unlocked}
-                setUnlocked={setUnlocked}
-                onVaultUpdate={setVault}
-              />
-            )}
-            {tab === "heirs" && (
-              <HeirsTab vault={vault} t={t} onVaultUpdate={setVault} />
-            )}
+            {tab==="vault" && <VaultTab vault={vault} es={es} onVaultUpdate={setVault}/>}
+            {tab==="heirs" && <HeirsTab vault={vault} es={es} onVaultUpdate={setVault}/>}
           </>
         )}
-
-        {/* ── Payment CTA (unpaid) ── */}
-        {vaultState === "unpaid" && (
-          <PaymentCard t={t} vaultId={vault?.id} />
-        )}
+        {isUnpaid && <PaymentCard vault={vault} es={es}/>}
       </main>
+      <style>{`@keyframes critPulse{0%,100%{opacity:.5}50%{opacity:1}} @keyframes spin{to{transform:rotate(360deg)}} @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}`}</style>
     </div>
   );
 }
 
-// ─── Pulse Widget ─────────────────────────────────────────────────
-function PulseWidget({ vault, t, tr, onPulse, pulsing, pulseMsg, isCritical }) {
-  const [timeDisplay, setTimeDisplay] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-
-  useEffect(() => {
-    function calc() {
+function PulseWidget({ vault, es, onPulse, pulsing, pulseMsg, isCrit }) {
+  const [time, setTime] = useState({ d:0,h:0,m:0,s:0 });
+  useEffect(()=>{
+    function calc(){
       if (!vault?.last_pulse_at) return;
-      const deadline = new Date(vault.last_pulse_at).getTime() + 60 * 24 * 60 * 60 * 1000;
-      const diff = Math.max(0, deadline - Date.now());
-      setTimeDisplay({
-        days: Math.floor(diff / 86400000),
-        hours: Math.floor((diff % 86400000) / 3600000),
-        minutes: Math.floor((diff % 3600000) / 60000),
-        seconds: Math.floor((diff % 60000) / 1000),
-      });
+      const deadline = new Date(vault.last_pulse_at).getTime()+60*24*60*60*1000;
+      const diff = Math.max(0,deadline-Date.now());
+      setTime({ d:Math.floor(diff/86400000), h:Math.floor((diff%86400000)/3600000), m:Math.floor((diff%3600000)/60000), s:Math.floor((diff%60000)/1000) });
     }
-    calc();
-    const id = setInterval(calc, 1000);
-    return () => clearInterval(id);
-  }, [vault?.last_pulse_at]);
-
-  const { days, hours, minutes, seconds } = timeDisplay;
-  const urgent = days < 7;
-
+    calc(); const id=setInterval(calc,1000); return()=>clearInterval(id);
+  },[vault?.last_pulse_at]);
+  const urgent = time.d < 7;
   return (
-    <div className={`rounded-2xl border p-8 transition-all duration-500 ${
-      isCritical
-        ? "bg-red-950/60 border-red-500/40 shadow-2xl shadow-red-500/10"
-        : urgent
-        ? "bg-amber-950/40 border-amber-500/30"
-        : "bg-slate-900/60 border-slate-700/50"
-    }`}>
-      <p className={`text-center text-sm font-medium mb-6 ${
-        isCritical ? "text-red-400" : urgent ? "text-amber-400" : "text-slate-400"
-      }`}>
-        {isCritical ? `🚨 ${t.status.critical}` : t.pulse.title}
+    <div style={{ borderRadius:16, border:`1px solid ${isCrit?"rgba(220,60,60,0.3)":urgent?"rgba(200,152,42,0.25)":"rgba(180,160,120,0.12)"}`, padding:"48px 32px", textAlign:"center", background:isCrit?"rgba(40,5,5,0.5)":urgent?"rgba(40,30,5,0.3)":"rgba(255,255,255,0.02)" }}>
+      <p style={{ fontSize:12, color:isCrit?"#e06060":urgent?gold:"#8a7868", fontFamily:"sans-serif", letterSpacing:"1.5px", textTransform:"uppercase", margin:"0 0 28px" }}>
+        {isCrit?(es?"🚨 ACCIÓN REQUERIDA":"🚨 ACTION REQUIRED"):(es?"Próxima confirmación en":"Next confirmation in")}
       </p>
-
-      {/* Countdown */}
-      <div className="flex items-center justify-center gap-4 mb-8">
-        {[
-          { val: days, label: t.pulse.days },
-          { val: hours, label: t.pulse.hours },
-          { val: minutes, label: t.pulse.minutes },
-          { val: seconds, label: "seg" },
-        ].map(({ val, label }) => (
-          <div key={label} className="text-center">
-            <div className={`text-4xl md:text-6xl font-black tabular-nums tracking-tighter ${
-              isCritical ? "text-red-300" : urgent ? "text-amber-300" : "text-white"
-            }`}>
-              {pad(val)}
-            </div>
-            <div className="text-slate-500 text-xs mt-1 uppercase tracking-widest">{label}</div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:24, marginBottom:40 }}>
+        {[[time.d,es?"días":"days"],[time.h,es?"horas":"hours"],[time.m,"min"],[time.s,"seg"]].map(([v,l])=>(
+          <div key={l}>
+            <div style={{ fontSize:"clamp(44px,8vw,72px)", fontWeight:300, color:isCrit?"#e06060":urgent?gold:"#f0ece4", lineHeight:1, fontVariantNumeric:"tabular-nums", fontFamily:"Georgia,serif" }}>{pad(v)}</div>
+            <div style={{ fontSize:11, color:"#6a6058", fontFamily:"sans-serif", letterSpacing:"1px", textTransform:"uppercase", marginTop:6 }}>{l}</div>
           </div>
         ))}
       </div>
-
-      {/* Pulse button */}
-      <button
-        onClick={onPulse}
-        disabled={pulsing || !vault?.is_paid}
-        className={`w-full py-5 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all duration-200 active:scale-95 disabled:opacity-50 ${
-          isCritical
-            ? "bg-red-600 hover:bg-red-500 text-white shadow-xl shadow-red-500/30"
-            : "bg-violet-600 hover:bg-violet-500 text-white shadow-xl shadow-violet-500/20"
-        }`}
-      >
-        {pulsing ? (
-          <><Loader2 size={22} className="animate-spin" />{t.pulse.confirming}</>
-        ) : (
-          <><Heart size={22} className={isCritical ? "animate-pulse" : ""} />{t.pulse.button}</>
-        )}
+      <button onClick={onPulse} disabled={pulsing||!vault?.is_paid}
+        style={{ padding:"18px 48px", background:isCrit?"#dc2626":gold, color:"#0a0a0f", border:"none", borderRadius:10, fontSize:16, fontWeight:600, cursor:"pointer", fontFamily:"sans-serif", display:"inline-flex", alignItems:"center", gap:10, opacity:(pulsing||!vault?.is_paid)?0.6:1, transition:"all 0.2s" }}>
+        {pulsing?<><Loader2 size={20} style={{ animation:"spin 1s linear infinite"}}/>{es?"Registrando...":"Recording..."}</>:<><Heart size={20}/>{es?"Estoy Vivo — Renovar Pulso":"I'm Alive — Renew Pulse"}</>}
       </button>
-
-      {pulseMsg && (
-        <p className={`text-center text-sm mt-4 font-medium ${
-          pulseMsg.includes("✓") ? "text-emerald-400" : "text-red-400"
-        }`}>{pulseMsg}</p>
-      )}
-
-      {vault?.last_pulse_at && (
-        <p className="text-center text-slate-600 text-xs mt-4">
-          {t.pulse.lastPulse}: {new Date(vault.last_pulse_at).toLocaleString()}
-        </p>
-      )}
+      {pulseMsg && <p style={{ margin:"20px 0 0", fontSize:14, fontFamily:"sans-serif", color:pulseMsg.includes("✓")?"#5cb890":"#e06060" }}>{pulseMsg}</p>}
+      {vault?.last_pulse_at && <p style={{ margin:"14px 0 0", fontSize:12, color:"#4a4038", fontFamily:"sans-serif" }}>{es?"Último pulso":"Last pulse"}: {new Date(vault.last_pulse_at).toLocaleString()}</p>}
     </div>
   );
 }
 
-// ─── Vault Tab ────────────────────────────────────────────────────
-function VaultTab({ vault, t, masterPassword, setMasterPassword, showPassword, setShowPassword, unlocked, setUnlocked, onVaultUpdate }) {
-  const [files, setFiles] = useState([]);
-  const [testament, setTestament] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
-  const [glmLoading, setGlmLoading] = useState(false);
-  const [storageUsed, setStorageUsed] = useState(vault?.storage_used_bytes || 0);
-  const dropRef = useRef();
-
-  const storagePercent = Math.min(100, (storageUsed / STORAGE_LIMIT) * 100);
-
-  async function handleUnlock() {
-    if (!masterPassword) return;
-    setUnlocked(true); // In real app, verify against stored hash
-  }
-
-  async function handleDrop(e) {
-    e.preventDefault();
-    const newFiles = [...(e.dataTransfer?.files || e.target.files)];
-    const totalNew = newFiles.reduce((s, f) => s + f.size, 0);
-    if (storageUsed + totalNew > STORAGE_LIMIT) {
-      setSaveMsg(t.errors.storageExceeded);
-      return;
-    }
-    setFiles(prev => [...prev, ...newFiles]);
-    setStorageUsed(prev => prev + totalNew);
-  }
-
-  async function handleSave() {
-    if (!masterPassword) return;
-    setSaving(true);
-    setSaveMsg("");
-    try {
-      const key = await deriveKey(masterPassword, base64ToBuffer(vault.payload_salt || bufferToBase64(new Uint8Array(32))));
-      const encFiles = await Promise.all(files.map(f => encryptFile(f, key)));
-      const payload = { testament, files: encFiles, savedAt: new Date().toISOString() };
-      const { encryptedPayload, salt } = await encryptVaultPayload(payload, masterPassword);
-      // In real app: POST to Supabase
-      setSaveMsg(t.vault.saved);
-    } catch { setSaveMsg(t.errors.encryptionFailed); }
-    setSaving(false);
-  }
-
-  async function handleGLMAssist() {
-    setGlmLoading(true);
-    try {
-      const res = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${GLM_API_KEY}` },
-        body: JSON.stringify({
-          model: "glm-4",
-          messages: [
-            { role: "system", content: "Eres un asistente que ayuda a redactar testamentos digitales. Sé claro, empático y organizado. Sugiere una estructura básica." },
-            { role: "user", content: `Ayúdame a estructurar un testamento digital. Contexto actual: "${testament || 'Sin contenido aún'}". Sugiere cómo organizarlo mejor.` },
-          ],
-          max_tokens: 400,
-        }),
-      });
-      const data = await res.json();
-      const suggestion = data.choices?.[0]?.message?.content;
-      if (suggestion) setTestament(prev => prev + (prev ? "\n\n---\n" : "") + suggestion);
-    } catch { setSaveMsg("Error al conectar con IA. Intenta de nuevo."); }
-    setGlmLoading(false);
-  }
-
-  async function handleDownloadKey() {
-    const pkg = {
-      vaultId: vault.id,
-      salt: vault.payload_salt,
-      algorithm: "AES-GCM-256-PBKDF2-600k",
-      version: "1.0",
-      generatedAt: new Date().toISOString(),
-      _note: "Este archivo es necesario para desencriptar el legado. Guárdalo en lugar seguro.",
-    };
-    const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `legadozero-herencia-${vault.id.slice(0, 8)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
+function VaultTab({ vault, es, onVaultUpdate }) {
+  const [files,setFiles]=useState([]); const [testament,setTestament]=useState(""); const [password,setPassword]=useState(""); const [showPass,setShowPass]=useState(false); const [saving,setSaving]=useState(false); const [saveMsg,setSaveMsg]=useState(""); const [glmLoading,setGlmLoading]=useState(false); const [storageUsed,setStorageUsed]=useState(vault?.storage_used_bytes||0);
+  const pct=Math.min(100,(storageUsed/STORAGE_LIMIT)*100);
+  async function handleFiles(e){ const picked=[...(e.dataTransfer?.files||e.target.files||[])]; const ns=picked.reduce((s,f)=>s+f.size,0); if(storageUsed+ns>STORAGE_LIMIT){setSaveMsg(es?"Límite de 1 GB alcanzado.":"1 GB limit reached.");return;} setFiles(p=>[...p,...picked]); setStorageUsed(p=>p+ns); }
+  async function handleSave(){ if(!password){setSaveMsg(es?"Ingresa tu contraseña maestra.":"Enter your master password.");return;} setSaving(true);setSaveMsg(""); try{await encryptVaultPayload({testament,savedAt:new Date().toISOString()},password);setSaveMsg(es?"✓ Guardado y cifrado localmente.":"✓ Saved and encrypted locally.");}catch{setSaveMsg(es?"Error al cifrar.":"Encryption error.");} setSaving(false); }
+  async function handleGLM(){ setGlmLoading(true); try{ const res=await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${GLM_API_KEY}`},body:JSON.stringify({model:"glm-4",messages:[{role:"system",content:"Ayuda a redactar testamentos digitales. Empático y organizado."},{role:"user",content:`Organiza este testamento: "${testament||"vacío"}"`}],max_tokens:400})}); const d=await res.json(); const sug=d.choices?.[0]?.message?.content; if(sug)setTestament(p=>p+(p?"\n\n---\n":"")+sug); }catch{setSaveMsg(es?"Error IA.":"AI error.");} setGlmLoading(false); }
+  function downloadKey(){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([JSON.stringify({vaultId:vault.id,salt:vault.payload_salt,algorithm:"AES-GCM-256-PBKDF2-600k",version:"1.0",generatedAt:new Date().toISOString()},null,2)],{type:"application/json"})); a.download=`legadozero-herencia-${vault.id?.slice(0,8)||"demo"}.json`; a.click(); }
+  const inp={ width:"100%", padding:"12px 16px", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(180,160,120,0.15)", borderRadius:8, color:"#e8e0d0", fontSize:14, fontFamily:"sans-serif", outline:"none", boxSizing:"border-box" };
   return (
-    <div className="space-y-6">
-      {/* Storage bar */}
-      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <HardDrive size={16} className="text-slate-400" />
-            <span className="text-slate-400 text-sm">{t.vault.storageUsed}</span>
-          </div>
-          <span className="text-white text-sm font-medium">
-            {formatBytes(storageUsed)} / 1 GB
-          </span>
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, padding:20 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}><HardDrive size={14} color="#6a6058"/><span style={{ fontSize:13, color:"#8a7868", fontFamily:"sans-serif" }}>{es?"Almacenamiento":"Storage"}</span></div>
+          <span style={{ fontSize:13, color:"#e8e0d0", fontFamily:"sans-serif" }}>{formatBytes(storageUsed)} / 1 GB</span>
         </div>
-        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              storagePercent > 90 ? "bg-red-500" : storagePercent > 70 ? "bg-amber-500" : "bg-violet-500"
-            }`}
-            style={{ width: `${storagePercent}%` }}
-          />
-        </div>
+        <div style={{ height:4, background:"rgba(255,255,255,0.06)", borderRadius:2, overflow:"hidden" }}><div style={{ height:"100%", width:`${pct}%`, background:pct>90?"#e06060":pct>70?gold:"#5cb890", borderRadius:2, transition:"width 0.4s" }}/></div>
       </div>
-
-      {/* Password unlock */}
-      {!unlocked && (
-        <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Lock size={18} className="text-violet-400" />
-            <h3 className="text-white font-semibold">Contraseña Maestra</h3>
-          </div>
-          <div className="flex gap-3">
-            <div className="flex-1 relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={masterPassword}
-                onChange={e => setMasterPassword(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleUnlock()}
-                placeholder="Ingresa tu contraseña maestra para cifrar"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-violet-500 pr-10"
-              />
-              <button
-                onClick={() => setShowPassword(p => !p)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-            <button
-              onClick={handleUnlock}
-              className="px-5 py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-lg font-medium text-sm transition-colors"
-            >
-              <Unlock size={16} />
-            </button>
-          </div>
-          <p className="text-slate-600 text-xs mt-3">
-            🔒 Tu contraseña nunca sale de este dispositivo. Se usa para cifrar localmente.
-          </p>
+      <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, padding:20 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}><Lock size={14} color={gold}/><span style={{ fontSize:14, color:"#e8e0d0", fontFamily:"sans-serif" }}>{es?"Contraseña Maestra":"Master Password"}</span></div>
+        <div style={{ position:"relative" }}>
+          <input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder={es?"Clave para cifrar localmente":"Key to encrypt locally"} style={{ ...inp, paddingRight:44 }} onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+          <button onClick={()=>setShowPass(p=>!p)} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#6a6058", cursor:"pointer" }}>{showPass?<EyeOff size={16}/>:<Eye size={16}/>}</button>
         </div>
-      )}
-
-      {/* File dropzone */}
-      <div
-        ref={dropRef}
-        onDrop={handleDrop}
-        onDragOver={e => e.preventDefault()}
-        className="border-2 border-dashed border-slate-700 hover:border-violet-500/50 rounded-xl p-10 text-center cursor-pointer transition-colors group"
-        onClick={() => document.getElementById("file-input").click()}
-      >
-        <input id="file-input" type="file" multiple onChange={handleDrop} className="hidden" />
-        <Upload size={32} className="mx-auto text-slate-600 group-hover:text-violet-400 transition-colors mb-3" />
-        <p className="text-slate-400 text-sm">{t.vault.dropzone}</p>
-        <p className="text-slate-600 text-xs mt-1">{t.vault.dropzoneHint}</p>
+        <p style={{ fontSize:11, color:"#4a4038", fontFamily:"sans-serif", margin:"8px 0 0" }}>🔒 {es?"Tu contraseña nunca se transmite.":"Your password is never transmitted."}</p>
       </div>
-
-      {/* File list */}
-      {files.length > 0 && (
-        <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
-          {files.map((file, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 last:border-0">
-              <FileText size={16} className="text-slate-500 shrink-0" />
-              <span className="text-slate-300 text-sm flex-1 truncate">{file.name}</span>
-              <span className="text-slate-500 text-xs">{formatBytes(file.size)}</span>
-              <button
-                onClick={() => {
-                  setStorageUsed(p => p - file.size);
-                  setFiles(p => p.filter((_, j) => j !== i));
-                }}
-                className="text-slate-600 hover:text-red-400 transition-colors"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Testament */}
-      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <FileText size={16} className="text-slate-400" />
-            <h3 className="text-white font-semibold text-sm">{t.vault.testament}</h3>
-          </div>
-          <button
-            onClick={handleGLMAssist}
-            disabled={glmLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors disabled:opacity-50"
-          >
-            {glmLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} className="text-violet-400" />}
-            {glmLoading ? t.vault.glmAssisting : t.vault.glmAssist}
+      <div onDrop={e=>{e.preventDefault();handleFiles(e);}} onDragOver={e=>e.preventDefault()} onClick={()=>document.getElementById("lz-fi").click()} style={{ border:"2px dashed rgba(180,160,120,0.18)", borderRadius:12, padding:"40px 24px", textAlign:"center", cursor:"pointer" }} onMouseEnter={e=>e.currentTarget.style.borderColor=gold} onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(180,160,120,0.18)"}>
+        <input id="lz-fi" type="file" multiple style={{ display:"none" }} onChange={handleFiles}/>
+        <Upload size={26} color="#6a6058" style={{ marginBottom:10 }}/>
+        <p style={{ fontSize:14, color:"#8a7868", fontFamily:"sans-serif", margin:"0 0 4px" }}>{es?"Arrastra archivos o haz clic":"Drag files or click"}</p>
+        <p style={{ fontSize:12, color:"#4a4038", fontFamily:"sans-serif", margin:0 }}>Max 1 GB · AES-256</p>
+      </div>
+      {files.length>0 && <div style={{ border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, overflow:"hidden" }}>{files.map((f,i)=>(<div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px", borderBottom:i<files.length-1?"1px solid rgba(180,160,120,0.06)":"none" }}><FileText size={14} color="#6a6058"/><span style={{ fontSize:13, color:"#a09080", fontFamily:"sans-serif", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</span><span style={{ fontSize:12, color:"#6a6058", fontFamily:"sans-serif" }}>{formatBytes(f.size)}</span><button onClick={()=>{setStorageUsed(p=>p-f.size);setFiles(p=>p.filter((_,j)=>j!==i));}} style={{ background:"none", border:"none", color:"#6a6058", cursor:"pointer", padding:0 }}><X size={14}/></button></div>))}</div>}
+      <div style={{ border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, overflow:"hidden" }}>
+        <div style={{ padding:"14px 16px", borderBottom:"1px solid rgba(180,160,120,0.08)", display:"flex", justifyContent:"space-between", alignItems:"center", background:"rgba(255,255,255,0.01)" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}><FileText size={14} color="#6a6058"/><span style={{ fontSize:14, color:"#e8e0d0", fontFamily:"sans-serif" }}>{es?"Testamento":"Testament"}</span></div>
+          <button onClick={handleGLM} disabled={glmLoading} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 12px", background:"rgba(200,152,42,0.1)", border:"1px solid rgba(200,152,42,0.2)", borderRadius:6, color:gold, fontSize:12, cursor:"pointer", fontFamily:"sans-serif", opacity:glmLoading?0.6:1 }}>
+            {glmLoading?<Loader2 size={13} style={{ animation:"spin 1s linear infinite"}}/>:<Sparkles size={13}/>}{glmLoading?(es?"Generando...":"Generating..."):(es?"IA":"AI")}
           </button>
         </div>
-        <textarea
-          value={testament}
-          onChange={e => setTestament(e.target.value)}
-          placeholder={t.vault.testamentPlaceholder}
-          rows={8}
-          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-violet-500 resize-none"
-        />
+        <textarea value={testament} onChange={e=>setTestament(e.target.value)} rows={7} placeholder={es?"Escribe tus últimas voluntades…":"Write your last wishes…"} style={{ width:"100%", padding:"16px", background:"rgba(255,255,255,0.01)", border:"none", color:"#e8e0d0", fontSize:14, fontFamily:"sans-serif", resize:"vertical", outline:"none", boxSizing:"border-box", lineHeight:1.7 }}/>
       </div>
-
-      {/* Actions */}
-      <div className="flex gap-3">
-        <button
-          onClick={handleSave}
-          disabled={saving || !masterPassword}
-          className="flex-1 py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
-        >
-          {saving ? <><Loader2 size={16} className="animate-spin" />{t.vault.encrypting}</> : <><Lock size={16} />{t.vault.encrypt}</>}
+      <div style={{ display:"flex", gap:12 }}>
+        <button onClick={handleSave} disabled={saving||!password} style={{ flex:1, padding:"14px", background:gold, color:"#0a0a0f", border:"none", borderRadius:8, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"sans-serif", display:"flex", alignItems:"center", justifyContent:"center", gap:8, opacity:(saving||!password)?0.6:1 }}>
+          {saving?<><Loader2 size={16} style={{ animation:"spin 1s linear infinite"}}/>{es?"Cifrando...":"Encrypting..."}</>:<><Lock size={16}/>{es?"Cifrar y Guardar":"Encrypt & Save"}</>}
         </button>
-        <button
-          onClick={handleDownloadKey}
-          className="px-5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-semibold text-sm flex items-center gap-2 transition-colors"
-          title={t.vault.downloadKeyDesc}
-        >
-          <Download size={16} />
-          <span className="hidden sm:inline">{t.vault.downloadKey}</span>
-        </button>
+        <button onClick={downloadKey} style={{ padding:"14px 18px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(180,160,120,0.15)", borderRadius:8, color:"#a09080", cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontSize:13, fontFamily:"sans-serif" }}><Download size={15}/></button>
       </div>
-
-      {saveMsg && (
-        <p className={`text-center text-sm font-medium ${saveMsg.includes("✓") ? "text-emerald-400" : "text-red-400"}`}>
-          {saveMsg}
-        </p>
-      )}
+      {saveMsg && <p style={{ textAlign:"center", fontSize:14, fontFamily:"sans-serif", color:saveMsg.includes("✓")?"#5cb890":"#e06060", margin:0 }}>{saveMsg}</p>}
     </div>
   );
 }
 
-// ─── Heirs Tab ────────────────────────────────────────────────────
-function HeirsTab({ vault, t, onVaultUpdate }) {
-  const [heirs, setHeirs] = useState(vault?.heirs || []);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
-
-  function addHeir() {
-    if (heirs.length >= MAX_HEIRS) return;
-    setHeirs(p => [...p, { id: crypto.randomUUID(), name: "", email: "", whatsapp: "" }]);
-  }
-
-  function updateHeir(id, field, val) {
-    setHeirs(p => p.map(h => h.id === id ? { ...h, [field]: val } : h));
-  }
-
-  function removeHeir(id) {
-    setHeirs(p => p.filter(h => h.id !== id));
-  }
-
-  async function saveHeirs() {
-    setSaving(true);
-    await new Promise(r => setTimeout(r, 800));
-    onVaultUpdate(v => ({ ...v, heirs }));
-    setSaveMsg(t.heirs.saved);
-    setSaving(false);
-  }
-
+function HeirsTab({ vault, es, onVaultUpdate }) {
+  const [heirs,setHeirs]=useState(vault?.heirs||[]); const [saving,setSaving]=useState(false); const [saveMsg,setSaveMsg]=useState("");
+  async function save(){ setSaving(true); await new Promise(r=>setTimeout(r,700)); onVaultUpdate(v=>({...v,heirs})); setSaveMsg(es?"✓ Herederos actualizados.":"✓ Heirs updated."); setSaving(false); }
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
         <div>
-          <h3 className="text-white font-semibold">{t.heirs.title}</h3>
-          <p className="text-slate-500 text-xs mt-1">{t.heirs.subtitle}</p>
+          <h3 style={{ fontSize:18, fontWeight:400, color:"#f0ece4", margin:"0 0 4px" }}>{es?"Herederos Designados":"Designated Heirs"}</h3>
+          <p style={{ fontSize:13, color:"#6a6058", fontFamily:"sans-serif", margin:0 }}>{es?`Máximo ${MAX_HEIRS} personas`:`Maximum ${MAX_HEIRS} people`}</p>
         </div>
-        <button
-          onClick={addHeir}
-          disabled={heirs.length >= MAX_HEIRS}
-          className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          <Plus size={15} />
-          {t.heirs.addHeir}
+        <button onClick={()=>heirs.length<MAX_HEIRS&&setHeirs(p=>[...p,{id:crypto.randomUUID(),name:"",email:"",whatsapp:""}])} disabled={heirs.length>=MAX_HEIRS} style={{ display:"flex", alignItems:"center", gap:6, padding:"10px 18px", background:gold, color:"#0a0a0f", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"sans-serif", opacity:heirs.length>=MAX_HEIRS?0.5:1 }}>
+          <Plus size={15}/>{es?"Añadir":"Add"}
         </button>
       </div>
-
-      {heirs.length === 0 ? (
-        <div className="bg-slate-900 rounded-xl border border-dashed border-slate-700 p-12 text-center">
-          <Users size={32} className="mx-auto text-slate-700 mb-3" />
-          <p className="text-slate-500 text-sm">Sin herederos designados</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {heirs.map((heir, i) => (
-            <div key={heir.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-slate-500 text-xs font-medium uppercase tracking-wider">Heredero {i + 1}</span>
-                <button onClick={() => removeHeir(heir.id)} className="text-slate-600 hover:text-red-400 transition-colors">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {[
-                  { field: "name", placeholder: t.heirs.name },
-                  { field: "email", placeholder: t.heirs.email, type: "email" },
-                  { field: "whatsapp", placeholder: t.heirs.whatsapp, type: "tel" },
-                ].map(({ field, placeholder, type = "text" }) => (
-                  <input
-                    key={field}
-                    type={type}
-                    value={heir[field]}
-                    onChange={e => updateHeir(heir.id, field, e.target.value)}
-                    placeholder={placeholder}
-                    className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white placeholder-slate-600 text-sm focus:outline-none focus:border-violet-500"
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {heirs.length > 0 && (
-        <button
-          onClick={saveHeirs}
-          disabled={saving}
-          className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
-        >
-          {saving ? <><Loader2 size={16} className="animate-spin" />Guardando…</> : <><CheckCircle size={16} />{t.heirs.save}</>}
-        </button>
-      )}
-
-      {saveMsg && <p className="text-center text-emerald-400 text-sm font-medium">{saveMsg}</p>}
-
-      {heirs.length >= MAX_HEIRS && (
-        <p className="text-center text-amber-400 text-xs">{t.heirs.limitReached}</p>
-      )}
-    </div>
-  );
-}
-
-// ─── Released Banner ──────────────────────────────────────────────
-function ReleasedBanner({ vault, t }) {
-  return (
-    <div className="bg-slate-900/60 border border-slate-700 rounded-2xl p-8 text-center">
-      <ShieldOff size={48} className="mx-auto text-slate-600 mb-4" />
-      <h2 className="text-white font-bold text-xl mb-2">{t.status.released}</h2>
-      <p className="text-slate-400 text-sm max-w-sm mx-auto">{t.status.releasedDesc}</p>
-      {vault?.triggered_at && (
-        <p className="text-slate-600 text-xs mt-4">
-          Protocolo activado: {new Date(vault.triggered_at).toLocaleString()}
-        </p>
-      )}
-      {vault?.heirs?.map(h => (
-        <div key={h.id} className="mt-3 text-xs text-slate-500">
-          ✓ {h.name} notificado {h.notified_at ? new Date(h.notified_at).toLocaleString() : ""}
+      {heirs.length===0?(<div style={{ border:"2px dashed rgba(180,160,120,0.15)", borderRadius:12, padding:"60px 24px", textAlign:"center" }}><Users size={30} color="#4a4038" style={{ marginBottom:10 }}/><p style={{ fontSize:14, color:"#6a6058", fontFamily:"sans-serif", margin:0 }}>{es?"Sin herederos designados.":"No heirs designated."}</p></div>
+      ):heirs.map((h,i)=>(
+        <div key={h.id} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, padding:18 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <span style={{ fontSize:11, color:"#6a6058", fontFamily:"sans-serif", letterSpacing:"1px", textTransform:"uppercase" }}>{es?"Heredero":"Heir"} {i+1}</span>
+            <button onClick={()=>setHeirs(p=>p.filter((_,j)=>j!==i))} style={{ background:"none", border:"none", color:"#6a6058", cursor:"pointer" }} onMouseEnter={e=>e.target.style.color="#e06060"} onMouseLeave={e=>e.target.style.color="#6a6058"}><Trash2 size={14}/></button>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:10 }}>
+            {[{f:"name",ph:es?"Nombre completo":"Full name"},{f:"email",ph:"email",t:"email"},{f:"whatsapp",ph:"+57...",t:"tel"}].map(({f,ph,t="text"})=>(
+              <input key={f} type={t} value={h[f]} onChange={e=>setHeirs(p=>p.map((x,j)=>j===i?{...x,[f]:e.target.value}:x))} placeholder={ph} style={{ padding:"11px 14px", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(180,160,120,0.12)", borderRadius:7, color:"#e8e0d0", fontSize:13, fontFamily:"sans-serif", outline:"none" }} onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.12)"}/>
+            ))}
+          </div>
         </div>
       ))}
+      {heirs.length>0&&<button onClick={save} disabled={saving} style={{ padding:"14px", background:gold, color:"#0a0a0f", border:"none", borderRadius:8, fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"sans-serif", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>{saving?<><Loader2 size={16} style={{ animation:"spin 1s linear infinite"}}/>{es?"Guardando...":"Saving..."}</>:<><CheckCircle size={16}/>{es?"Guardar Herederos":"Save Heirs"}</>}</button>}
+      {saveMsg&&<p style={{ textAlign:"center", fontSize:14, fontFamily:"sans-serif", color:"#5cb890", margin:0 }}>{saveMsg}</p>}
     </div>
   );
 }
 
-// ─── Payment ──────────────────────────────────────────────────────
-function PaymentButton({ t, vaultId }) {
+function ReleasedBanner({ vault, es }) {
   return (
-    <a
-      href={`${LEMON_LINK}?checkout[custom][vault_id]=${vaultId || ""}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-bold transition-colors whitespace-nowrap"
-    >
-      {t.payment.cta}
-    </a>
+    <div style={{ border:"1px solid rgba(180,160,120,0.12)", borderRadius:16, padding:"48px 32px", textAlign:"center", marginBottom:32 }}>
+      <ShieldOff size={44} color="#4a4038" style={{ marginBottom:16 }}/>
+      <h2 style={{ fontSize:22, fontWeight:400, color:"#f0ece4", margin:"0 0 10px" }}>{es?"Protocolo de Herencia Activado":"Inheritance Protocol Activated"}</h2>
+      <p style={{ fontSize:14, color:"#8a7868", fontFamily:"sans-serif", maxWidth:400, margin:"0 auto 16px", lineHeight:1.6 }}>{es?"Los herederos fueron notificados con acceso seguro a esta bóveda.":"Heirs were notified with secure access to this vault."}</p>
+      {vault?.triggered_at&&<p style={{ fontSize:12, color:"#4a4038", fontFamily:"sans-serif" }}>{es?"Activado":"Triggered"}: {new Date(vault.triggered_at).toLocaleString()}</p>}
+    </div>
   );
 }
 
-function PaymentCard({ t, vaultId }) {
+function PaymentCard({ vault, es }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
-      <div className="inline-flex items-center justify-center w-16 h-16 bg-violet-500/20 rounded-2xl mb-5">
-        <Lock size={28} className="text-violet-400" />
-      </div>
-      <h2 className="text-white font-bold text-2xl mb-2">{t.payment.title}</h2>
-      <p className="text-slate-400 text-sm mb-1">{t.payment.desc}</p>
-      <p className="text-slate-500 text-xs mb-6">{t.payment.pppNote}</p>
-      <div className="text-4xl font-black text-white mb-2">{t.payment.price}</div>
-      <a
-        href={`${LEMON_LINK}?checkout[custom][vault_id]=${vaultId || ""}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-2 mt-6 px-8 py-4 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-bold text-lg transition-colors shadow-xl shadow-violet-500/20"
-      >
-        <Zap size={20} />
-        {t.payment.cta}
-        <ChevronRight size={18} />
+    <div style={{ border:"1px solid rgba(200,152,42,0.2)", borderRadius:16, padding:"48px 32px", textAlign:"center", background:"rgba(200,152,42,0.02)", marginTop:32 }}>
+      <div style={{ width:52, height:52, background:"rgba(200,152,42,0.1)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}><Lock size={24} color={gold}/></div>
+      <h2 style={{ fontSize:22, fontWeight:400, color:"#f0ece4", margin:"0 0 8px" }}>{es?"Activa tu Bóveda":"Activate your Vault"}</h2>
+      <p style={{ fontSize:14, color:"#8a7868", fontFamily:"sans-serif", margin:"0 0 8px" }}>{es?"Pago único · Sin suscripciones · Vitalicio":"One-time payment · No subscriptions · Lifetime"}</p>
+      <div style={{ fontSize:52, fontWeight:300, color:gold, fontFamily:"Georgia,serif", margin:"24px 0" }}>$10 USD</div>
+      <a href={`${LEMON_LINK}?checkout[custom][vault_id]=${vault?.id||""}`} target="_blank" rel="noopener noreferrer" style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"16px 40px", background:gold, color:"#0a0a0f", borderRadius:10, fontSize:15, fontWeight:700, textDecoration:"none", fontFamily:"sans-serif" }}>
+        <Zap size={18}/>{es?"Activar ahora":"Activate now"}<ChevronRight size={16}/>
       </a>
-      <div className="flex items-center justify-center gap-4 mt-6">
-        {["Lemon Squeezy", "128-bit SSL", "Sin suscripción"].map(b => (
-          <span key={b} className="text-slate-600 text-xs flex items-center gap-1">
-            <CheckCircle size={11} className="text-emerald-600" />{b}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
 
-// ─── Status Badge ─────────────────────────────────────────────────
-function StatusBadge({ state, t }) {
-  const config = {
-    normal: { color: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30", label: t.status.active },
-    warning: { color: "bg-amber-500/20 text-amber-400 border-amber-500/30", label: t.status.warning },
-    critical: { color: "bg-red-500/20 text-red-400 border-red-500/30 animate-pulse", label: t.status.critical },
-    released: { color: "bg-slate-700/40 text-slate-400 border-slate-700", label: t.status.released },
-    unpaid: { color: "bg-amber-500/20 text-amber-400 border-amber-500/30", label: "Sin activar" },
-  };
-  const { color, label } = config[state] || config.normal;
-  return (
-    <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${color}`}>{label}</span>
-  );
-}
-
-// ─── Loading Screen ───────────────────────────────────────────────
-function LoadingScreen({ t }) {
-  return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4">
-      <div className="w-14 h-14 bg-violet-500/20 rounded-2xl flex items-center justify-center">
-        <Shield size={28} className="text-violet-400" />
-      </div>
-      <div className="flex gap-1.5">
-        {[0, 1, 2].map(i => (
-          <div key={i} className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-bounce"
-            style={{ animationDelay: `${i * 150}ms` }} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  HEIR DECRYPT VIEW  —  /boveda/descifrar/[UUID]
-// ═══════════════════════════════════════════════════════════════════
-function HeirDecryptView({ vaultId, t, tr }) {
-  const [token, setToken] = useState("");
-  const [heirEmail, setHeirEmail] = useState("");
-  const [state, setState] = useState("idle"); // idle | loading | success | error
-  const [decryptedData, setDecryptedData] = useState(null);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  async function handleDecrypt() {
-    if (!token || !heirEmail) return;
-    setState("loading");
-    setErrorMsg("");
-
-    try {
-      // 1. Fetch vault from Supabase (public function, triggered vaults only)
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/rpc/get_heir_vault`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: SUPABASE_ANON,
-          },
-          body: JSON.stringify({ p_vault_id: vaultId }),
-        }
-      );
-      const vaultData = await res.json();
-      if (!vaultData?.[0]) throw new Error("Vault not found or not triggered");
-
-      const { encrypted_payload, payload_salt, heir_packages, glm_heir_summary } = vaultData[0];
-
-      // 2. Find the heir's package by email
-      const packages = Array.isArray(heir_packages) ? heir_packages : JSON.parse(heir_packages || "[]");
-      const heirPkg = packages.find(p => p.heir_email?.toLowerCase() === heirEmail.toLowerCase());
-      if (!heirPkg) throw new Error("Email not found in heir list");
-
-      // 3. Reconstruct vault key using heir email + server token
-      const { reconstructVaultKey } = await import("./lib/crypto");
-      const vaultKey = await reconstructVaultKey(heirPkg, heirEmail, token);
-
-      // 4. Decrypt payload
-      const { decryptData } = await import("./lib/crypto");
-      const rawDecrypted = await decryptData(encrypted_payload, vaultKey);
-      const payload = JSON.parse(new TextDecoder().decode(rawDecrypted));
-
-      setDecryptedData({ ...payload, glm_summary: glm_heir_summary });
-      setState("success");
-    } catch (err) {
-      console.error(err);
-      setErrorMsg(t.heir.error);
-      setState("error");
-    }
+function HeirDecryptView({ vaultId, lang }) {
+  const [token,setToken]=useState(""); const [email,setEmail]=useState(""); const [state,setState]=useState("idle"); const [data,setData]=useState(null); const [errMsg,setErrMsg]=useState("");
+  const es=lang!=="en";
+  async function handleDecrypt(){
+    if(!token||!email)return; setState("loading");
+    try{
+      const res=await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_heir_vault`,{method:"POST",headers:{"Content-Type":"application/json",apikey:SUPABASE_ANON},body:JSON.stringify({p_vault_id:vaultId})});
+      const rows=await res.json(); if(!rows?.[0])throw new Error("Not found");
+      const v=rows[0]; const pkgs=Array.isArray(v.heir_packages)?v.heir_packages:JSON.parse(v.heir_packages||"[]");
+      const pkg=pkgs.find(p=>p.heir_email?.toLowerCase()===email.toLowerCase()); if(!pkg)throw new Error("Email not in heir list");
+      const {reconstructVaultKey,decryptData}=await import("./lib/crypto");
+      const vKey=await reconstructVaultKey(pkg,email,token);
+      const raw=await decryptData(v.encrypted_payload,vKey);
+      setData({...JSON.parse(new TextDecoder().decode(raw)),glm_summary:v.glm_heir_summary}); setState("success");
+    }catch{ setErrMsg(es?"Token o correo inválido.":"Invalid token or email."); setState("error"); }
   }
-
-  async function downloadFile(encFile) {
-    const { decryptFile: df } = await import("./lib/crypto");
-    // In real app, use the reconstructed key stored in state
-    // For demo: just show name
-    const a = document.createElement("a");
-    a.href = "#";
-    a.download = encFile.name;
-    a.click();
-  }
-
+  const inp={ width:"100%", padding:"14px 16px", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(180,160,120,0.15)", borderRadius:8, color:"#e8e0d0", fontSize:14, fontFamily:"sans-serif", outline:"none", boxSizing:"border-box" };
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-violet-500/20 rounded-2xl mb-4">
-            <Unlock size={28} className="text-violet-400" />
-          </div>
-          <h1 className="text-white font-bold text-2xl">{t.heir.title}</h1>
-          <p className="text-slate-400 text-sm mt-2">{t.heir.subtitle}</p>
-          <p className="text-slate-600 text-xs mt-1">ID: {vaultId}</p>
+    <div style={{ minHeight:"100vh", background:"#0a0a0f", display:"flex", alignItems:"center", justifyContent:"center", padding:24, fontFamily:"Georgia,'Times New Roman',serif" }}>
+      <div style={{ width:"100%", maxWidth:460 }}>
+        <div style={{ textAlign:"center", marginBottom:36 }}>
+          <div style={{ width:52, height:52, background:"rgba(200,152,42,0.1)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}><Unlock size={24} color={gold}/></div>
+          <h1 style={{ fontSize:24, fontWeight:400, color:"#f0ece4", margin:"0 0 6px" }}>{es?"Descifrar Legado":"Decrypt Legacy"}</h1>
+          <p style={{ fontSize:13, color:"#6a6058", fontFamily:"sans-serif", margin:0 }}>ID: {vaultId}</p>
         </div>
-
-        {state !== "success" ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-            {/* Email */}
-            <div>
-              <label className="block text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">
-                Tu correo electrónico (el que el propietario registró)
-              </label>
-              <input
-                type="email"
-                value={heirEmail}
-                onChange={e => setHeirEmail(e.target.value)}
-                placeholder="tu@correo.com"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-violet-500"
-              />
-            </div>
-
-            {/* Token */}
-            <div>
-              <label className="block text-slate-400 text-xs font-medium mb-2 uppercase tracking-wider">
-                {t.heir.tokenLabel}
-              </label>
-              <textarea
-                value={token}
-                onChange={e => setToken(e.target.value)}
-                placeholder={t.heir.tokenPlaceholder}
-                rows={3}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-violet-500 resize-none font-mono"
-              />
-            </div>
-
-            {errorMsg && (
-              <div className="flex items-center gap-2 p-3 bg-red-950/50 border border-red-500/30 rounded-lg">
-                <AlertTriangle size={16} className="text-red-400 shrink-0" />
-                <p className="text-red-400 text-sm">{errorMsg}</p>
-              </div>
-            )}
-
-            <button
-              onClick={handleDecrypt}
-              disabled={state === "loading" || !token || !heirEmail}
-              className="w-full py-4 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl font-bold text-base flex items-center justify-center gap-2 transition-colors"
-            >
-              {state === "loading"
-                ? <><Loader2 size={18} className="animate-spin" />{t.heir.decrypting}</>
-                : <><Unlock size={18} />{t.heir.decrypt}</>
-              }
+        {state!=="success"?(
+          <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(180,160,120,0.1)", borderRadius:16, padding:24, display:"flex", flexDirection:"column", gap:12 }}>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder={es?"Tu correo electrónico":"Your email"} style={inp} onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+            <textarea value={token} onChange={e=>setToken(e.target.value)} rows={3} placeholder={es?"Token recibido por correo o WhatsApp":"Token received by email or WhatsApp"} style={{ ...inp, resize:"none", fontFamily:"monospace", fontSize:12 }} onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+            {state==="error"&&<div style={{ padding:"12px 14px", background:"rgba(220,60,60,0.08)", border:"1px solid rgba(220,60,60,0.2)", borderRadius:8 }}><p style={{ margin:0, fontSize:13, color:"#e06060", fontFamily:"sans-serif" }}>{errMsg}</p></div>}
+            <button onClick={handleDecrypt} disabled={state==="loading"||!token||!email} style={{ padding:"16px", background:gold, color:"#0a0a0f", border:"none", borderRadius:8, fontSize:15, fontWeight:600, cursor:"pointer", fontFamily:"sans-serif", display:"flex", alignItems:"center", justifyContent:"center", gap:8, opacity:(state==="loading"||!token||!email)?0.6:1 }}>
+              {state==="loading"?<><Loader2 size={18} style={{ animation:"spin 1s linear infinite"}}/>{es?"Descifrando...":"Decrypting..."}</>:<><Unlock size={18}/>{es?"Descifrar Legado":"Decrypt Legacy"}</>}
             </button>
-
-            <p className="text-slate-600 text-xs text-center flex items-center justify-center gap-1.5">
-              <Lock size={11} />
-              {t.heir.privacy}
-            </p>
+            <p style={{ fontSize:12, color:"#4a4038", fontFamily:"sans-serif", textAlign:"center", margin:0 }}>🔒 {es?"El descifrado ocurre en tu dispositivo.":"Decryption happens on your device."}</p>
           </div>
-        ) : (
-          /* ── Success: Show decrypted content ── */
-          <div className="space-y-4">
-            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-4 text-center">
-              <CheckCircle size={24} className="mx-auto text-emerald-400 mb-2" />
-              <p className="text-emerald-400 font-semibold text-sm">{t.heir.success}</p>
+        ):(
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            <div style={{ padding:"14px", background:"rgba(92,184,144,0.08)", border:"1px solid rgba(92,184,144,0.2)", borderRadius:10, textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              <CheckCircle size={18} color="#5cb890"/><span style={{ fontSize:14, color:"#5cb890", fontFamily:"sans-serif", fontWeight:600 }}>{es?"Legado descifrado":"Legacy decrypted"}</span>
             </div>
-
-            {/* GLM Summary */}
-            {decryptedData?.glm_summary && (
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles size={16} className="text-violet-400" />
-                  <h3 className="text-white font-semibold text-sm">Resumen del Legado (IA)</h3>
-                </div>
-                <p className="text-slate-300 text-sm leading-relaxed">{decryptedData.glm_summary}</p>
-              </div>
-            )}
-
-            {/* Testament */}
-            {decryptedData?.testament && (
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <FileText size={16} className="text-slate-400" />
-                  <h3 className="text-white font-semibold text-sm">{t.heir.testament}</h3>
-                </div>
-                <p className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
-                  {decryptedData.testament}
-                </p>
-              </div>
-            )}
-
-            {/* Files */}
-            {decryptedData?.files?.length > 0 && (
-              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-800 flex items-center gap-2">
-                  <Download size={16} className="text-slate-400" />
-                  <h3 className="text-white font-semibold text-sm">{t.heir.files}</h3>
-                </div>
-                {decryptedData.files.map((file, i) => (
-                  <div key={i} className="flex items-center gap-3 px-5 py-3 border-b border-slate-800 last:border-0">
-                    <FileText size={16} className="text-slate-500" />
-                    <span className="text-slate-300 text-sm flex-1 truncate">{file.name}</span>
-                    <span className="text-slate-600 text-xs">{formatBytes(file.size)}</span>
-                    <button
-                      onClick={() => downloadFile(file)}
-                      className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-xs font-medium transition-colors"
-                    >
-                      {t.heir.download}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            {data?.glm_summary&&<div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, padding:18 }}><div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10 }}><Sparkles size={15} color={gold}/><span style={{ fontSize:14, color:"#e8e0d0", fontFamily:"sans-serif" }}>Resumen IA</span></div><p style={{ fontSize:14, color:"#a09080", fontFamily:"sans-serif", lineHeight:1.7, margin:0 }}>{data.glm_summary}</p></div>}
+            {data?.testament&&<div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(180,160,120,0.1)", borderRadius:12, padding:18 }}><div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10 }}><FileText size={15} color="#6a6058"/><span style={{ fontSize:14, color:"#e8e0d0", fontFamily:"sans-serif" }}>{es?"Mensaje":"Message"}</span></div><p style={{ fontSize:14, color:"#a09080", fontFamily:"sans-serif", lineHeight:1.7, margin:0, whiteSpace:"pre-wrap" }}>{data.testament}</p></div>}
           </div>
         )}
       </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+function FullScreenLoader() {
+  return (
+    <div style={{ minHeight:"100vh", background:"#0a0a0f", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20 }}>
+      <div style={{ width:48, height:48, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <div style={{ display:"flex", gap:6 }}>
+        {[0,1,2].map(i=><div key={i} style={{ width:6, height:6, background:gold, borderRadius:"50%", animation:"bounce 1.2s ease-in-out infinite", animationDelay:`${i*200}ms` }}/>)}
+      </div>
+      <style>{`@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}`}</style>
     </div>
   );
 }
