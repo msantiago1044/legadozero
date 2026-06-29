@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Shield, Users, CreditCard, Clock, AlertTriangle, CheckCircle, LogOut, RefreshCw, Loader2, ChevronDown } from "lucide-react";
+import { LogoFull } from "../components/Logo";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -74,12 +75,9 @@ export default function AdminPanel({ user, onSignOut, lang }) {
       {/* Header */}
       <header style={{ borderBottom:"1px solid rgba(180,160,120,0.12)", background:"rgba(10,10,15,0.98)", position:"sticky", top:0, zIndex:50 }}>
         <div style={{ maxWidth:1200, margin:"0 auto", padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", height:64 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:32, height:32, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </div>
-            <span style={{ fontSize:16, color:gold }}>LegadoZero</span>
-            <span style={{ fontSize:11, color:"#6a6058", fontFamily:"sans-serif", padding:"3px 8px", border:"1px solid rgba(180,160,120,0.15)", borderRadius:4, letterSpacing:"1px", textTransform:"uppercase" }}>Admin</span>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <LogoFull size={30} showTagline />
+            <span style={{ fontSize:11, color:"#6a6058", fontFamily:"sans-serif", padding:"3px 8px", border:"1px solid rgba(180,160,120,0.15)", borderRadius:4, letterSpacing:"1px", textTransform:"uppercase", marginLeft:8 }}>Admin</span>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:16 }}>
             <span style={{ fontSize:13, color:"#6a6058", fontFamily:"sans-serif" }}>{user?.email}</span>

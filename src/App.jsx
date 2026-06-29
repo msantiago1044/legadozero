@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
 import AdminPanel from "./pages/AdminPanel";
+import { LogoFull, LogoIcon } from "./components/Logo";
 import {
   Shield, ShieldOff, Heart, Upload, FileText,
   Users, Download, Lock, Unlock, AlertTriangle, CheckCircle,
@@ -166,15 +167,7 @@ function Dashboard({ user, lang, onSignOut }) {
 
       <header style={{ position:"sticky", top:0, zIndex:50, background:"rgba(10,10,15,0.97)", borderBottom:"1px solid rgba(180,160,120,0.12)", backdropFilter:"blur(12px)" }}>
         <div style={{ maxWidth:960, margin:"0 auto", padding:"0 24px", display:"flex", alignItems:"center", justifyContent:"space-between", height:64 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:34, height:34, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </div>
-            <div>
-              <div style={{ fontSize:16, fontWeight:700, color:gold }}>LegadoZero</div>
-              <div style={{ fontSize:10, color:"#6a6058", fontFamily:"sans-serif", letterSpacing:"1px", textTransform:"uppercase" }}>Custodia Digital</div>
-            </div>
-          </div>
+          <LogoFull size={34} showTagline />
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             {IS_DEMO && (
               <div style={{ display:"flex", gap:3 }}>
@@ -425,9 +418,7 @@ function HeirDecryptView({ vaultId, lang }) {
 function FullScreenLoader() {
   return (
     <div style={{ minHeight:"100vh", background:"#0a0a0f", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20 }}>
-      <div style={{ width:48, height:48, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:10, display:"flex", alignItems:"center", justifyContent:"center" }}>
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      </div>
+      <LogoIcon size={64} />
       <div style={{ display:"flex", gap:6 }}>
         {[0,1,2].map(i=><div key={i} style={{ width:6, height:6, background:gold, borderRadius:"50%", animation:"bounce 1.2s ease-in-out infinite", animationDelay:`${i*200}ms` }}/>)}
       </div>

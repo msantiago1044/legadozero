@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Shield, Lock, Heart, Clock, CheckCircle, ArrowRight, Star, ChevronDown } from "lucide-react";
+import { LogoIcon, LogoFull } from "../components/Logo";
 
 export default function LandingPage({ onGoToAuth, lang }) {
   const [faqOpen, setFaqOpen] = useState(null);
@@ -109,17 +110,7 @@ export default function LandingPage({ onGoToAuth, lang }) {
       {/* NAV */}
       <nav style={S.nav}>
         <div style={S.navInner}>
-          <div style={S.logo}>
-            <div style={S.logoIcon}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-            </div>
-            <div>
-              <div style={S.logoName}>LegadoZero</div>
-              <div style={S.logoSub}>Custodia Digital</div>
-            </div>
-          </div>
+          <LogoFull size={38} showTagline />
           <div style={S.navLinks}>
             {t.nav.map((n, i) => (
               <a key={i} href={`#${["como","seguridad","precio","faq"][i]}`} style={S.navA}
@@ -282,12 +273,7 @@ export default function LandingPage({ onGoToAuth, lang }) {
         <div style={{ maxWidth:1100, margin:"0 auto" }}>
           <div style={{ display:"flex", flexWrap:"wrap", justifyContent:"space-between", alignItems:"flex-start", gap:32, marginBottom:36 }}>
             <div>
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
-                <div style={{ width:28, height:28, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                </div>
-                <span style={{ fontSize:16, color:S.gold, fontFamily:"Georgia,serif" }}>LegadoZero</span>
-              </div>
+              <LogoFull size={28} />
               <p style={{ fontSize:13, color:"#6a6058", fontFamily:"sans-serif", maxWidth:220, lineHeight:1.6, margin:0 }}>{t.footer_tagline}</p>
             </div>
             <div style={{ display:"flex", gap:28, flexWrap:"wrap", alignItems:"center" }}>

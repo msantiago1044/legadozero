@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Eye, EyeOff, ArrowLeft, Mail, Lock, User, Loader2 } from "lucide-react";
+import { LogoFull } from "../components/Logo";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -104,12 +105,7 @@ export default function AuthPage({ onBack, onAuth, lang }) {
         >
           <ArrowLeft size={16}/> {T.back}
         </button>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <div style={{ width:30, height:30, background:"linear-gradient(135deg,#8B6914,#C8982A)", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          </div>
-          <span style={{ fontSize:17, color:gold }}>LegadoZero</span>
-        </div>
+        <LogoFull size={32} showTagline />
       </div>
 
       {/* Form area */}
