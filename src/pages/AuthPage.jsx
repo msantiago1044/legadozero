@@ -52,42 +52,90 @@ export default function AuthPage({ onBack, onAuth, lang }) {
     setMsg({ type:"", text:"" });
 
     try {
+      // ── Magic link ──────────────────────────────────────────────
       if (mode === "magic") {
-        await supaFetch("/auth/v1/magiclink", { email });
-        setMsg({ type:"ok", text: T.magicSent });
+        const data = await supaFetch("/auth/v1/magiclink", { email });
+        if (data.error) {
+          setMsg({ type:"error", text: data.msg || data.error_description || data.error });
+        } else {
+          setMsg({ type:"ok", text: T.magicSent });
+        }
         setLoading(false);
         return;
       }
 
-      if (!password || password.length < 8) {
-        setMsg({ type:"error", text: T.passMin });
+      // ── Password validation ─────────────────────────────────────
+      if (!password || password.length < 6) {
+        setMsg({ type:"error", text: es?"Mínimo 6 caracteres":"Minimum 6 characters" });
         setLoading(false);
         return;
       }
 
-      const endpoint = mode === "register" ? "/auth/v1/signup" : "/auth/v1/token?grant_type=password";
-      const data = await supaFetch(endpoint, { email, password });
+      // ── Register ────────────────────────────────────────────────
+      if (mode === "register") {
+        const data = await supaFetch("/auth/v1/signup", { email, password });
+
+        // Error explícito de Supabase
+        if (data.error || data.code >= 400) {
+          const errMsg = data.error_description || data.msg || data.message || data.error || (es?"Error al crear cuenta":"Error creating account");
+          setMsg({ type:"error", text: errMsg });
+          setLoading(false);
+          return;
+        }
+
+        // Caso A: confirmación de email desactivada → token inmediato
+        if (data.access_token) {
+          localStorage.setItem("lz_token", data.access_token);
+          localStorage.setItem("lz_user", JSON.stringify(data.user));
+          // Crear bóveda
+          try {
+            await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_vault`, {
+              method: "POST",
+              headers: { "Content-Type":"application/json", apikey: SUPABASE_ANON, Authorization:`Bearer ${data.access_token}` },
+              body: JSON.stringify({ p_email: email }),
+            });
+          } catch { /* vault creation optional at this stage */ }
+          onAuth(data.user);
+          return;
+        }
+
+        // Caso B: confirmación de email activada → pedir que revise correo
+        if (data.id || data.user?.id) {
+          setMsg({
+            type:"ok",
+            text: es
+              ? "✓ Cuenta creada. Revisa tu correo y confirma tu email para ingresar."
+              : "✓ Account created. Check your email and confirm it to sign in.",
+          });
+          setLoading(false);
+          return;
+        }
+
+        // Caso C: respuesta inesperada
+        setMsg({ type:"error", text: es?"Respuesta inesperada. Contacta soporte.":"Unexpected response. Contact support." });
+        setLoading(false);
+        return;
+      }
+
+      // ── Login ───────────────────────────────────────────────────
+      const data = await supaFetch("/auth/v1/token?grant_type=password", { email, password });
 
       if (data.access_token) {
         localStorage.setItem("lz_token", data.access_token);
         localStorage.setItem("lz_user", JSON.stringify(data.user));
-
-        // If new user, create vault
-        if (mode === "register" && data.user) {
-          await fetch(`${SUPABASE_URL}/rest/v1/rpc/create_vault`, {
-            method: "POST",
-            headers: { "Content-Type":"application/json", apikey: SUPABASE_ANON, Authorization:`Bearer ${data.access_token}` },
-            body: JSON.stringify({ p_email: email }),
-          });
-        }
-
         onAuth(data.user);
-      } else if (data.error || data.message) {
-        const errMsg = data.error_description || data.message || (es?"Error de autenticación":"Authentication error");
-        setMsg({ type:"error", text: errMsg });
+      } else {
+        const errMap = {
+          "Invalid login credentials": es?"Correo o contraseña incorrectos":"Invalid email or password",
+          "Email not confirmed": es?"Confirma tu correo antes de ingresar":"Please confirm your email first",
+        };
+        const raw = data.error_description || data.msg || data.message || data.error || "";
+        const friendly = errMap[raw] || raw || (es?"Error al iniciar sesión":"Login error");
+        setMsg({ type:"error", text: friendly });
       }
-    } catch {
-      setMsg({ type:"error", text: es?"Error de conexión. Intenta de nuevo.":"Connection error. Please try again." });
+
+    } catch (err) {
+      setMsg({ type:"error", text: es?`Error de conexión: ${err.message}`:`Connection error: ${err.message}` });
     }
     setLoading(false);
   }
