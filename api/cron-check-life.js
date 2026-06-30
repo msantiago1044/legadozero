@@ -163,7 +163,7 @@ async function notifyHeir(heir, vault, glmSummary, inheritanceUrl) {
   await Promise.allSettled([
     // Email
     resend.emails.send({
-      from: `LegadoZero <herencia@${process.env.RESEND_DOMAIN}>`,
+      from: `LegadoZero <${process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev"}>`,
       to: heir.email,
       subject: `📬 Has recibido el legado digital de ${vault.user_email}`,
       html: emailHtml,
@@ -172,10 +172,10 @@ async function notifyHeir(heir, vault, glmSummary, inheritanceUrl) {
     // WhatsApp (only if number provided)
     heir.whatsapp
       ? twilio.messages.create({
-          from: TWILIO_WHATSAPP_FROM,
-          to: `whatsapp:${heir.whatsapp}`,
-          body: whatsappMsg,
-        })
+        from: TWILIO_WHATSAPP_FROM,
+        to: `whatsapp:${heir.whatsapp}`,
+        body: whatsappMsg,
+      })
       : Promise.resolve(),
   ]);
 }
@@ -186,7 +186,7 @@ async function sendWarningAlert(vault, daysSince) {
   console.log(`[Vault ${vault.id}] Warning — ${daysLeft} days left`);
 
   await resend.emails.send({
-    from: `LegadoZero <pulso@${process.env.RESEND_DOMAIN}>`,
+    from: `LegadoZero <${process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev"}>`,
     to: vault.user_email,
     subject: `⚠️ LegadoZero — Renueva tu pulso (${daysLeft} días restantes)`,
     html: buildWarningEmail(vault, daysLeft),
@@ -212,7 +212,7 @@ async function sendCriticalAlert(vault, daysLeft) {
   console.log(`[Vault ${vault.id}] CRITICAL — ${daysLeft} days left`);
 
   await resend.emails.send({
-    from: `LegadoZero <pulso@${process.env.RESEND_DOMAIN}>`,
+    from: `LegadoZero <${process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev"}>`,
     to: vault.user_email,
     subject: `🚨 [ACCIÓN REQUERIDA] Tu bóveda se libera en ${daysLeft} días | LegadoZero`,
     html: buildCriticalEmail(vault, daysLeft),
@@ -299,10 +299,9 @@ function buildHeirEmail(heir, vault, glmSummary, inheritanceUrl) {
   <div class="body">
     <h2>Hola, ${heir.name}</h2>
     <p>Has sido designado/a como heredero/a en una bóveda digital de LegadoZero. El titular <strong>${vault.user_email}</strong> no ha confirmado su vitalidad en los últimos 60 días, por lo que el sistema ha activado automáticamente el protocolo de herencia.</p>
-    ${
-      glmSummary
-        ? `<div class="summary-box"><p>${glmSummary}</p></div>`
-        : ""
+    ${glmSummary
+      ? `<div class="summary-box"><p>${glmSummary}</p></div>`
+      : ""
     }
     <p>Para acceder al legado digital, haz clic en el botón a continuación. El descifrado ocurre completamente en tu dispositivo — LegadoZero no puede ver el contenido.</p>
     <a href="${inheritanceUrl}" class="cta">🔓 Acceder al Legado Digital</a>
