@@ -143,13 +143,12 @@ async function triggerVault(vault, heirs) {
     metadata: { heirs_notified: heirs.length },
   });
 
-  // 4. Notify all heirs
-  const inheritanceUrl = `${process.env.APP_URL}/boveda/descifrar/${vault.id}`;
-
+  // 4. Notify all heirs — each heir gets a unique URL with their token embedded
   await Promise.all(
-    heirs.map((heir) =>
-      notifyHeir(heir, vault, glmSummary, inheritanceUrl)
-    )
+    heirs.map((heir) => {
+      const inheritanceUrl = `${process.env.APP_URL}/boveda/descifrar/${vault.id}?token=${encodeURIComponent(heir.token || "")}`;
+      return notifyHeir(heir, vault, glmSummary, inheritanceUrl);
+    })
   );
 
   console.log(`[Vault ${vault.id}] Triggered. ${heirs.length} heirs notified.`);

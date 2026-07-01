@@ -236,7 +236,9 @@ function Dashboard({ user, lang, onSignOut }) {
 
   useEffect(() => {
     if (vault) {
-      setIsVaultLocked(!!vault.encrypted_payload && !derivedKey);
+      // Only lock when both encrypted_payload AND payload_salt exist
+      // Old saves without salt are unrecoverable — let user re-encrypt fresh
+      setIsVaultLocked(!!vault.encrypted_payload && !!vault.payload_salt && !derivedKey);
     }
   }, [vault, derivedKey]);
 
@@ -915,7 +917,9 @@ function PaymentCard({ vault, es }) {
 }
 
 function HeirDecryptView({ vaultId, lang }) {
-  const [token,setToken]=useState(""); const [email,setEmail]=useState(""); const [state,setState]=useState("idle"); const [data,setData]=useState(null); const [errMsg,setErrMsg]=useState("");
+  // Auto-extract token from URL query param so heirs just click the link
+  const urlToken = new URLSearchParams(window.location.search).get("token") || "";
+  const [token,setToken]=useState(urlToken); const [email,setEmail]=useState(""); const [state,setState]=useState("idle"); const [data,setData]=useState(null); const [errMsg,setErrMsg]=useState("");
   const es=lang!=="en";
   const [vKey,setVKey]=useState(null);
 
@@ -972,11 +976,21 @@ function HeirDecryptView({ vaultId, lang }) {
         </div>
         {state!=="success"?(
           <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:16,padding:24,display:"flex",flexDirection:"column",gap:12}}>
+            <p style={{fontSize:14,color:"#a09080",fontFamily:"sans-serif",margin:0,lineHeight:1.6,textAlign:"center"}}>
+              {es?"Ingresa tu correo para verificar tu identidad y acceder al legado.":"Enter your email to verify your identity and access the legacy."}
+            </p>
             <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder={es?"Tu correo electrónico":"Your email"} style={inp}
               onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
-            <textarea value={token} onChange={e=>setToken(e.target.value)} rows={3} placeholder={es?"Token recibido por correo o WhatsApp":"Token received by email or WhatsApp"}
-              style={{...inp,resize:"none",fontFamily:"monospace",fontSize:12}}
-              onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+            {urlToken ? (
+              <div style={{padding:"10px 14px",background:"rgba(92,184,144,0.06)",border:"1px solid rgba(92,184,144,0.15)",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
+                <CheckCircle size={15} color="#5cb890"/>
+                <span style={{fontSize:13,color:"#5cb890",fontFamily:"sans-serif"}}>{es?"Token de seguridad detectado automáticamente":"Security token detected automatically"}</span>
+              </div>
+            ) : (
+              <textarea value={token} onChange={e=>setToken(e.target.value)} rows={3} placeholder={es?"Token recibido por correo o WhatsApp":"Token received by email or WhatsApp"}
+                style={{...inp,resize:"none",fontFamily:"monospace",fontSize:12}}
+                onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+            )}
             {state==="error"&&<div style={{padding:"12px",background:"rgba(220,60,60,0.08)",border:"1px solid rgba(220,60,60,0.2)",borderRadius:8}}><p style={{margin:0,fontSize:13,color:"#e06060",fontFamily:"sans-serif"}}>{errMsg}</p></div>}
             <button onClick={handleDecrypt} disabled={state==="loading"||!token||!email}
               style={{padding:"16px",background:gold,color:"#0a0a0f",border:"none",borderRadius:8,fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:(state==="loading"||!token||!email)?0.6:1}}>
