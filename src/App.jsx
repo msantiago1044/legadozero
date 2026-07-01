@@ -227,6 +227,19 @@ function Dashboard({ user, lang, onSignOut }) {
   const es = lang !== "en";
   es_global = es;
 
+  // Lifted vault state to prevent unmount loss when switching tabs
+  const [decryptedTestament, setDecryptedTestament] = useState("");
+  const [decryptedFiles, setDecryptedFiles] = useState([]);
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [derivedKey, setDerivedKey] = useState(null);
+  const [isVaultLocked, setIsVaultLocked] = useState(true);
+
+  useEffect(() => {
+    if (vault) {
+      setIsVaultLocked(!!vault.encrypted_payload && !derivedKey);
+    }
+  }, [vault, derivedKey]);
+
   // Load vault once on mount (not on tab change)
   useEffect(() => { loadVault(); }, [IS_DEMO ? demoState : undefined]);
 
@@ -348,7 +361,24 @@ function Dashboard({ user, lang, onSignOut }) {
                 </button>
               ))}
             </div>
-            {tab==="vault" && <VaultTab vault={vault} es={es} onVaultUpdate={setVault}/>}
+            {tab==="vault" && (
+              <VaultTab
+                vault={vault}
+                user={user}
+                es={es}
+                onVaultUpdate={setVault}
+                testament={decryptedTestament}
+                setTestament={setDecryptedTestament}
+                files={decryptedFiles}
+                setFiles={setDecryptedFiles}
+                password={vaultPassword}
+                setPassword={setVaultPassword}
+                isLocked={isVaultLocked}
+                setIsLocked={setIsVaultLocked}
+                derivedKey={derivedKey}
+                setDerivedKey={setDerivedKey}
+              />
+            )}
             {tab==="heirs" && <HeirsTab vault={vault} es={es} onVaultUpdate={setVault}/>}
           </>
         )}
@@ -396,35 +426,238 @@ function PulseWidget({ vault, es, onPulse, pulsing, pulseMsg, isCrit }) {
 }
 
 // ── Vault Tab ─────────────────────────────────────────────────────
-function VaultTab({ vault, es, onVaultUpdate }) {
-  // Persist testament across tab changes using vault data
-  const [testament,   setTestament]   = useState(vault?.testament_preview || "");
-  const [password,    setPassword]    = useState("");
+function VaultTab({
+  vault,
+  user,
+  es,
+  onVaultUpdate,
+  testament,
+  setTestament,
+  files,
+  setFiles,
+  password,
+  setPassword,
+  isLocked,
+  setIsLocked,
+  derivedKey,
+  setDerivedKey
+}) {
   const [showPass,    setShowPass]    = useState(false);
-  const [files,       setFiles]       = useState([]);
   const [saving,      setSaving]      = useState(false);
   const [saveMsg,     setSaveMsg]     = useState("");
   const [glmLoading,  setGlmLoading]  = useState(false);
+  const [unlocking,   setUnlocking]   = useState(false);
+  const [filesToDelete, setFilesToDelete] = useState([]);
+
   const storageUsed = vault?.storage_used_bytes || 0;
   const pct = Math.min(100,(storageUsed/STORAGE_LIMIT)*100);
+
+  async function handleUnlock() {
+    if (!password) {
+      setSaveMsg(es ? "Ingresa tu contraseña maestra." : "Enter your master password.");
+      return;
+    }
+    setUnlocking(true);
+    setSaveMsg("");
+    try {
+      const { deriveKey, decryptVaultPayload } = await import("./lib/crypto");
+      const salt = vault.payload_salt;
+      if (!salt) throw new Error("No salt found in vault");
+      
+      const decrypted = await decryptVaultPayload(vault.encrypted_payload, salt, password);
+      const key = await deriveKey(password, salt);
+      
+      setTestament(decrypted.testament || "");
+      setFiles(decrypted.files || []);
+      setDerivedKey(key);
+      setIsLocked(false);
+      setSaveMsg(es ? "✓ Bóveda desbloqueada." : "✓ Vault unlocked.");
+    } catch (e) {
+      console.error(e);
+      setSaveMsg(es ? "Contraseña incorrecta." : "Incorrect password.");
+    }
+    setUnlocking(false);
+  }
 
   async function handleFiles(e){
     const picked=[...(e.dataTransfer?.files||e.target.files||[])];
     const ns=picked.reduce((s,f)=>s+f.size,0);
     if(storageUsed+ns>STORAGE_LIMIT){setSaveMsg(es?"Límite de 1 GB alcanzado.":"1 GB limit reached.");return;}
-    setFiles(p=>[...p,...picked]);
+    
+    const newFiles = picked.map(f => ({
+      id: window.crypto.randomUUID(),
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      fileObject: f,
+      isPending: true
+    }));
+    setFiles(p=>[...p,...newFiles]);
   }
 
   async function handleSave(){
     if(!password){setSaveMsg(es?"Ingresa tu contraseña maestra.":"Enter your master password.");return;}
     setSaving(true);setSaveMsg("");
     try{
-      const {encryptedPayload,salt}=await encryptVaultPayload({testament,savedAt:new Date().toISOString()},password);
-      // Persist testament preview to vault state so it survives tab changes
-      onVaultUpdate(v=>({...v, testament_preview:testament}));
-      setSaveMsg(es?"✓ Guardado y cifrado localmente.":"✓ Saved and encrypted locally.");
-    }catch{setSaveMsg(es?"Error al cifrar.":"Encryption error.");}
+      const { deriveKey, generateSalt, encryptData, createHeirPackage, encryptFile, bufferToBase64 } = await import("./lib/crypto");
+      
+      let saltStr = vault?.payload_salt;
+      let activeKey = derivedKey;
+      
+      if (!activeKey) {
+        if (!saltStr) {
+          const newSalt = generateSalt();
+          saltStr = bufferToBase64(newSalt.buffer);
+        }
+        activeKey = await deriveKey(password, saltStr);
+        setDerivedKey(activeKey);
+      }
+
+      // 1. Upload pending files
+      const token = localStorage.getItem("lz_token");
+      const updatedFiles = [...files];
+      
+      for (let i = 0; i < updatedFiles.length; i++) {
+        const file = updatedFiles[i];
+        if (file.isPending) {
+          const encrypted = await encryptFile(file.fileObject, activeKey);
+          const filePath = `${vault.user_id}/${file.id}`;
+          const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/vault-files/${filePath}`, {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_ANON,
+              Authorization: `Bearer ${token}`,
+              "x-upsert": "true",
+              "Content-Type": "text/plain"
+            },
+            body: encrypted.encryptedBase64
+          });
+          if (!uploadRes.ok) throw new Error(`Upload failed for ${file.name}`);
+          
+          // Clear fileObject and pending flag after upload
+          delete file.fileObject;
+          delete file.isPending;
+        }
+      }
+
+      // 2. Delete removed files
+      if (filesToDelete.length > 0) {
+        const deleteRes = await fetch(`${SUPABASE_URL}/storage/v1/object/vault-files`, {
+          method: "DELETE",
+          headers: {
+            apikey: SUPABASE_ANON,
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ prefixes: filesToDelete.map(id => `${vault.user_id}/${id}`) })
+        });
+        if (!deleteRes.ok) console.warn("Failed to delete some files from storage");
+        setFilesToDelete([]);
+      }
+
+      // 3. Compile file metadata
+      const filesMetadata = updatedFiles.map(f => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        type: f.type
+      }));
+
+      // 4. Encrypt payload (testament + files metadata)
+      const payload = {
+        testament,
+        files: filesMetadata,
+        savedAt: new Date().toISOString()
+      };
+      const json = JSON.stringify(payload);
+      const encryptedPayload = await encryptData(json, activeKey);
+
+      // 5. Generate heir packages
+      const currentHeirs = vault.heirs_contacts || [];
+      let updatedHeirs = [...currentHeirs];
+
+      // Assign tokens to heirs if missing
+      updatedHeirs = updatedHeirs.map(heir => {
+        if (!heir.token) {
+          return { ...heir, token: window.crypto.randomUUID().replace(/-/g, "") };
+        }
+        return heir;
+      });
+
+      const heirPackages = [];
+      for (const heir of updatedHeirs) {
+        const pkg = await createHeirPackage(activeKey, heir.email, heir.token);
+        heirPackages.push({
+          heir_email: heir.email,
+          ...pkg
+        });
+      }
+
+      // 6. Calculate total storage used
+      const totalStorageUsed = filesMetadata.reduce((sum, f) => sum + f.size, 0);
+
+      // 7. Save to database
+      const updateData = {
+        encrypted_payload: encryptedPayload,
+        payload_salt: saltStr,
+        heir_packages: heirPackages,
+        heirs_contacts: updatedHeirs,
+        storage_used_bytes: totalStorageUsed
+      };
+
+      const patchRes = await supaFetch(`/rest/v1/vaults?id=eq.${vault.id}`, {
+        method: "PATCH",
+        headers: {
+          Prefer: "return=representation",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(updateData)
+      });
+
+      if (Array.isArray(patchRes) && patchRes.length > 0) {
+        onVaultUpdate(patchRes[0]);
+      } else {
+        onVaultUpdate(v => ({
+          ...v,
+          ...updateData
+        }));
+      }
+
+      setFiles(updatedFiles);
+      setSaveMsg(es?"✓ Guardado y cifrado correctamente.":"✓ Saved and encrypted successfully.");
+    }catch(e){
+      console.error(e);
+      setSaveMsg(es?"Error al guardar.":"Error saving.");
+    }
     setSaving(false);
+  }
+
+  async function handleDownloadFile(file) {
+    if (!derivedKey) return;
+    try {
+      const token = localStorage.getItem("lz_token");
+      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/authenticated/vault-files/${vault.user_id}/${file.id}`, {
+        headers: {
+          apikey: SUPABASE_ANON,
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const encryptedBase64 = await res.text();
+      
+      const { decryptFile } = await import("./lib/crypto");
+      const decrypted = await decryptFile({ name: file.name, type: file.type, encryptedBase64 }, derivedKey);
+      
+      const url = URL.createObjectURL(decrypted.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = decrypted.name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert(es ? "Error al descargar o descifrar el archivo." : "Error downloading or decrypting file.");
+    }
   }
 
   async function handleGLM(){
@@ -446,6 +679,33 @@ function VaultTab({ vault, es, onVaultUpdate }) {
   }
 
   const inp={padding:"12px 16px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(180,160,120,0.15)",borderRadius:8,color:"#e8e0d0",fontSize:14,fontFamily:"sans-serif",outline:"none",boxSizing:"border-box",width:"100%"};
+
+  // If vault is locked, show the lock screen
+  if (isLocked) {
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:20}}>
+        <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:24,textAlign:"center"}}>
+          <div style={{width:52,height:52,background:"rgba(200,152,42,0.1)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Lock size={24} color={gold}/></div>
+          <h3 style={{fontSize:18,fontWeight:400,color:"#f0ece4",margin:"0 0 8px"}}>{es?"Bóveda Cifrada y Bloqueada":"Vault Encrypted and Locked"}</h3>
+          <p style={{fontSize:13,color:"#8a7868",fontFamily:"sans-serif",maxWidth:400,margin:"0 auto 20px",lineHeight:1.5}}>
+            {es?"Esta bóveda está protegida con cifrado de conocimiento cero. Introduce tu contraseña maestra para descifrar y ver tus voluntades y archivos.":"This vault is protected with zero-knowledge encryption. Enter your master password to decrypt and view your wishes and files."}
+          </p>
+          <div style={{position:"relative",maxWidth:360,margin:"0 auto 16px"}}>
+            <input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)}
+              placeholder={es?"Clave Maestra":"Master Password"}
+              style={{...inp,paddingRight:44}}
+              onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+            <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6a6058",cursor:"pointer"}}>{showPass?<EyeOff size={16}/>:<Eye size={16}/>}</button>
+          </div>
+          <button onClick={handleUnlock} disabled={unlocking||!password}
+            style={{padding:"12px 32px",background:gold,color:"#0a0a0f",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"sans-serif",opacity:(unlocking||!password)?0.6:1,display:"inline-flex",alignItems:"center",gap:8}}>
+            {unlocking?<><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>{es?"Descifrando...":"Decrypting..."}</>:<><Unlock size={16}/>{es?"Desbloquear Bóveda":"Unlock Vault"}</>}
+          </button>
+          {saveMsg&&<p style={{textAlign:"center",fontSize:13,fontFamily:"sans-serif",color:"#e06060",marginTop:14,marginBottom:0}}>{saveMsg}</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
@@ -470,7 +730,7 @@ function VaultTab({ vault, es, onVaultUpdate }) {
             onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
           <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6a6058",cursor:"pointer"}}>{showPass?<EyeOff size={16}/>:<Eye size={16}/>}</button>
         </div>
-        <p style={{fontSize:11,color:"#4a4038",fontFamily:"sans-serif",margin:"8px 0 0"}}>🔒 {es?"Tu contraseña nunca se transmite.":"Your password is never transmitted."}</p>
+        <p style={{fontSize:11,color:"#4a4038",fontFamily:"sans-serif",margin:"8px 0 0"}}>🔒 {es?"Tu contraseña nunca se transmite. Usa la misma clave para seguir añadiendo archivos o testamento.":"Your password is never transmitted. Use the same key to keep adding files or testament."}</p>
       </div>
 
       {/* Dropzone */}
@@ -488,11 +748,21 @@ function VaultTab({ vault, es, onVaultUpdate }) {
       {files.length>0&&(
         <div style={{border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,overflow:"hidden"}}>
           {files.map((f,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<files.length-1?"1px solid rgba(180,160,120,0.06)":"none"}}>
+            <div key={f.id||i} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<files.length-1?"1px solid rgba(180,160,120,0.06)":"none"}}>
               <FileText size={14} color="#6a6058"/>
               <span style={{fontSize:13,color:"#a09080",fontFamily:"sans-serif",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
               <span style={{fontSize:12,color:"#6a6058",fontFamily:"sans-serif",flexShrink:0}}>{formatBytes(f.size)}</span>
-              <button onClick={()=>setFiles(p=>p.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"#6a6058",cursor:"pointer"}}><X size={14}/></button>
+              {!f.isPending && (
+                <button onClick={()=>handleDownloadFile(f)} style={{background:"none",border:"none",color:gold,cursor:"pointer",display:"flex",alignItems:"center"}} title={es?"Descargar y Descifrar":"Download and Decrypt"}>
+                  <Download size={14}/>
+                </button>
+              )}
+              <button onClick={()=>{
+                if (!f.isPending) {
+                  setFilesToDelete(p => [...p, f.id]);
+                }
+                setFiles(p=>p.filter((_,j)=>j!==i));
+              }} style={{background:"none",border:"none",color:"#6a6058",cursor:"pointer"}}><X size={14}/></button>
             </div>
           ))}
         </div>
@@ -515,7 +785,7 @@ function VaultTab({ vault, es, onVaultUpdate }) {
       <div style={{display:"flex",gap:12}}>
         <button onClick={handleSave} disabled={saving||!password}
           style={{flex:1,padding:"14px",background:gold,color:"#0a0a0f",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:(saving||!password)?0.6:1}}>
-          {saving?<><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>{es?"Cifrando...":"Encrypting..."}</>:<><Lock size={16}/>{es?"Cifrar y Guardar":"Encrypt & Save"}</>}
+          {saving?<><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>{es?"Guardando...":"Saving..."}</>:<><Lock size={16}/>{es?"Cifrar y Guardar":"Encrypt & Save"}</>}
         </button>
         <button onClick={downloadKey} title={es?"Descargar protocolo de herencia":"Download inheritance protocol"}
           style={{padding:"14px 18px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(180,160,120,0.15)",borderRadius:8,color:"#a09080",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"sans-serif"}}>
@@ -526,6 +796,8 @@ function VaultTab({ vault, es, onVaultUpdate }) {
     </div>
   );
 }
+
+
 
 // ── Heirs Tab — with country code selector ────────────────────────
 function HeirsTab({ vault, es, onVaultUpdate }) {
@@ -645,6 +917,8 @@ function PaymentCard({ vault, es }) {
 function HeirDecryptView({ vaultId, lang }) {
   const [token,setToken]=useState(""); const [email,setEmail]=useState(""); const [state,setState]=useState("idle"); const [data,setData]=useState(null); const [errMsg,setErrMsg]=useState("");
   const es=lang!=="en";
+  const [vKey,setVKey]=useState(null);
+
   async function handleDecrypt(){
     if(!token||!email)return; setState("loading");
     try{
@@ -653,11 +927,40 @@ function HeirDecryptView({ vaultId, lang }) {
       const v=rows[0]; const pkgs=Array.isArray(v.heir_packages)?v.heir_packages:JSON.parse(v.heir_packages||"[]");
       const pkg=pkgs.find(p=>p.heir_email?.toLowerCase()===email.toLowerCase()); if(!pkg)throw new Error("Email not in heir list");
       const {reconstructVaultKey,decryptData}=await import("./lib/crypto");
-      const vKey=await reconstructVaultKey(pkg,email,token);
-      const raw=await decryptData(v.encrypted_payload,vKey);
-      setData({...JSON.parse(new TextDecoder().decode(raw)),glm_summary:v.glm_heir_summary}); setState("success");
+      const key=await reconstructVaultKey(pkg,email,token);
+      const raw=await decryptData(v.encrypted_payload,key);
+      setData({...JSON.parse(new TextDecoder().decode(raw)),glm_summary:v.glm_heir_summary});
+      setVKey(key);
+      setState("success");
     }catch{ setErrMsg(es?"Token o correo inválido.":"Invalid token or email."); setState("error"); }
   }
+
+  async function handleDownloadHeirFile(file) {
+    if (!vKey) return;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/storage/v1/object/authenticated/vault-files/${vaultId}/${file.id}`, {
+        headers: {
+          apikey: SUPABASE_ANON
+        }
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const encryptedBase64 = await res.text();
+      
+      const { decryptFile } = await import("./lib/crypto");
+      const decrypted = await decryptFile({ name: file.name, type: file.type, encryptedBase64 }, vKey);
+      
+      const url = URL.createObjectURL(decrypted.blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = decrypted.name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert(es ? "Error al descargar o descifrar el archivo." : "Error downloading or decrypting file.");
+    }
+  }
+
   const inp={width:"100%",padding:"14px 16px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(180,160,120,0.15)",borderRadius:8,color:"#e8e0d0",fontSize:14,fontFamily:"sans-serif",outline:"none",boxSizing:"border-box"};
   return (
     <div style={{minHeight:"100vh",background:"#0a0a0f",display:"flex",alignItems:"center",justifyContent:"center",padding:24,fontFamily:"Georgia,'Times New Roman',serif"}}>
@@ -688,6 +991,26 @@ function HeirDecryptView({ vaultId, lang }) {
             </div>
             {data?.glm_summary&&<div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:18}}><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}><Sparkles size={15} color={gold}/><span style={{fontSize:14,color:"#e8e0d0",fontFamily:"sans-serif"}}>Resumen IA</span></div><p style={{fontSize:14,color:"#a09080",fontFamily:"sans-serif",lineHeight:1.7,margin:0}}>{data.glm_summary}</p></div>}
             {data?.testament&&<div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:18}}><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}><FileText size={15} color="#6a6058"/><span style={{fontSize:14,color:"#e8e0d0",fontFamily:"sans-serif"}}>{es?"Mensaje":"Message"}</span></div><p style={{fontSize:14,color:"#a09080",fontFamily:"sans-serif",lineHeight:1.7,margin:0,whiteSpace:"pre-wrap"}}>{data.testament}</p></div>}
+            {data?.files&&data.files.length>0&&(
+              <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:18}}>
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+                  <HardDrive size={15} color={gold}/>
+                  <span style={{fontSize:14,color:"#e8e0d0",fontFamily:"sans-serif"}}>{es?"Archivos del Legado":"Legacy Files"}</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {data.files.map((f,idx)=>(
+                    <div key={f.id||idx} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",background:"rgba(255,255,255,0.01)",border:"1px solid rgba(180,160,120,0.06)",borderRadius:8}}>
+                      <FileText size={14} color="#6a6058"/>
+                      <span style={{fontSize:13,color:"#a09080",fontFamily:"sans-serif",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
+                      <span style={{fontSize:12,color:"#6a6058",fontFamily:"sans-serif",flexShrink:0}}>{formatBytes(f.size)}</span>
+                      <button onClick={()=>handleDownloadHeirFile(f)} style={{background:"none",border:"none",color:gold,cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"sans-serif"}}>
+                        <Download size={14}/>{es?"Descargar":"Download"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

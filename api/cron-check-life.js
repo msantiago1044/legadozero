@@ -158,26 +158,42 @@ async function triggerVault(vault, heirs) {
 // ─── Notify a Single Heir ─────────────────────────────────────────
 async function notifyHeir(heir, vault, glmSummary, inheritanceUrl) {
   const emailHtml = buildHeirEmail(heir, vault, glmSummary, inheritanceUrl);
-  const whatsappMsg = buildHeirWhatsApp(heir, vault, inheritanceUrl);
+  const token = heir.token || "";
 
-  await Promise.allSettled([
-    // Email
+  const promises = [
+    // Email with legacy decryption URL
     resend.emails.send({
       from: `LegadoZero <${process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev"}>`,
       to: heir.email,
       subject: `📬 Has recibido el legado digital de ${vault.user_email}`,
       html: emailHtml,
-    }),
+    })
+  ];
 
-    // WhatsApp (only if number provided)
-    heir.whatsapp
-      ? twilio.messages.create({
+  if (heir.whatsapp) {
+    // Send token via WhatsApp
+    const whatsappMsg = buildHeirWhatsApp(heir, vault, token);
+    promises.push(
+      twilio.messages.create({
         from: TWILIO_WHATSAPP_FROM,
         to: `whatsapp:${heir.whatsapp}`,
         body: whatsappMsg,
       })
-      : Promise.resolve(),
-  ]);
+    );
+  } else {
+    // Send token via a second email
+    const tokenEmailHtml = buildTokenEmail(heir, vault, token);
+    promises.push(
+      resend.emails.send({
+        from: `LegadoZero <${process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev"}>`,
+        to: heir.email,
+        subject: `🔐 Token de seguridad — Legado de ${vault.user_email}`,
+        html: tokenEmailHtml,
+      })
+    );
+  }
+
+  await Promise.allSettled(promises);
 }
 
 // ─── Warning Alert (7-day intervals) ─────────────────────────────
@@ -358,17 +374,29 @@ function buildCriticalEmail(vault, daysLeft) {
 </body></html>`;
 }
 
-function buildHeirWhatsApp(heir, vault, inheritanceUrl) {
-  return `🔐 *LegadoZero — Protocolo de Herencia*
+function buildHeirWhatsApp(heir, vault, token) {
+  return `🔐 *LegadoZero — Token de Herencia*
 
-Hola ${heir.name}, has recibido acceso al legado digital de *${vault.user_email}*.
+Hola ${heir.name}, para descifrar el legado digital de *${vault.user_email}*, utiliza esta clave secreta de acceso:
 
-El titular no confirmó su vitalidad en 60 días, activando el protocolo automático.
-
-🔗 Accede aquí:
-${inheritanceUrl}
-
-Necesitarás el *Token de Herencia* (te lo enviamos por correo) para descifrar el contenido.
+🔑 *${token}*
 
 _LegadoZero — Cifrado de grado bancario_`;
+}
+
+function buildTokenEmail(heir, vault, token) {
+  return `
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;padding:40px;">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:40px;box-shadow:0 4px 24px rgba(0,0,0,0.08);border-top:4px solid #7c3aed;">
+  <h2 style="color:#0f172a;margin:0 0 16px;font-size:20px;">🔑 Token de Herencia de LegadoZero</h2>
+  <p style="color:#475569;line-height:1.6;margin:0 0 24px;">Hola ${heir.name}, has sido designado/a como heredero/a. Para completar el descifrado del legado digital de <strong>${vault.user_email}</strong>, introduce el siguiente token de seguridad en el formulario:</p>
+  <div style="background:#f1f5f9;border-left:4px solid #7c3aed;padding:20px;border-radius:0 8px 8px 0;font-family:monospace;font-size:22px;font-weight:bold;letter-spacing:1px;text-align:center;color:#0f172a;margin-bottom:24px;">
+    ${token}
+  </div>
+  <p style="color:#64748b;font-size:13px;margin:0;">Este token es personal y confidencial. No lo compartas con nadie.</p>
+</div>
+</body></html>`;
 }
