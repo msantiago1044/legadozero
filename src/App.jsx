@@ -456,6 +456,8 @@ function VaultTab({
   const [saveMsg,     setSaveMsg]     = useState("");
   const [glmLoading,  setGlmLoading]  = useState(false);
   const [unlocking,   setUnlocking]   = useState(false);
+  const [resetting,   setResetting]   = useState(false);
+  const [showReset,   setShowReset]   = useState(false);
   const [filesToDelete, setFilesToDelete] = useState([]);
   const autoUnlockRef = useRef(false);
 
@@ -470,22 +472,24 @@ function VaultTab({
     setUnlocking(true);
     setSaveMsg("");
     try {
-      const { deriveKey, decryptVaultPayload } = await import("./lib/crypto");
+      const { deriveKey, decryptVaultPayloadWithFallback } = await import("./lib/crypto");
       const salt = vault.payload_salt;
       if (!salt) throw new Error("No salt found in vault");
 
-      const decrypted = await decryptVaultPayload(vault.encrypted_payload, salt, pass);
-      const key = await deriveKey(pass, salt);
+      const { payload, key } = await decryptVaultPayloadWithFallback(vault.encrypted_payload, salt, pass);
 
-      setTestament(decrypted.testament || "");
-      setFiles(decrypted.files || []);
+      setTestament(payload.testament || "");
+      setFiles(payload.files || []);
       setDerivedKey(key);
       setIsLocked(false);
       setSaveMsg(es ? "✓ Bóveda desbloqueada." : "✓ Vault unlocked.");
       return true;
     } catch (e) {
       console.error(e);
-      setSaveMsg(es ? "Contraseña incorrecta. Usa la misma contraseña con la que inicias sesión." : "Incorrect password. Use the same password you use to sign in.");
+      setSaveMsg(es
+        ? "Contraseña incorrecta. Si antes usaste otra clave distinta, prueba con esa. Si no la recuerdas, puedes reiniciar la bóveda abajo."
+        : "Incorrect password. If you previously used a different vault password, try that. If you don't remember it, you can reset the vault below.");
+      setShowReset(true);
       autoUnlockRef.current = false;
       return false;
     } finally {
@@ -495,6 +499,49 @@ function VaultTab({
 
   async function handleUnlock() {
     await unlockWithPassword(password);
+  }
+
+  async function handleResetVault() {
+    if (!password) {
+      setSaveMsg(es ? "Ingresa la contraseña de tu cuenta." : "Enter your account password.");
+      return;
+    }
+    setResetting(true);
+    setSaveMsg("");
+    try {
+      const { deriveKey, generateSalt, encryptData, bufferToBase64 } = await import("./lib/crypto");
+      const newSalt = generateSalt();
+      const saltStr = bufferToBase64(newSalt.buffer);
+      const key = await deriveKey(password, newSalt);
+      const payload = { testament: "", files: [], savedAt: new Date().toISOString() };
+      const encryptedPayload = await encryptData(JSON.stringify(payload), key);
+
+      const updateData = {
+        encrypted_payload: encryptedPayload,
+        payload_salt: saltStr,
+        heir_packages: [],
+        storage_used_bytes: 0,
+      };
+
+      const patchRes = await supaFetch(`/rest/v1/vaults?id=eq.${vault.id}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=representation", "Content-Type": "application/json" },
+        body: JSON.stringify(updateData),
+      });
+
+      sessionStorage.setItem("lz_account_pass", password);
+      setTestament("");
+      setFiles([]);
+      setDerivedKey(key);
+      setIsLocked(false);
+      setShowReset(false);
+      onVaultUpdate(Array.isArray(patchRes) && patchRes.length > 0 ? patchRes[0] : { ...vault, ...updateData });
+      setSaveMsg(es ? "✓ Bóveda reiniciada con tu contraseña de cuenta." : "✓ Vault reset with your account password.");
+    } catch (e) {
+      console.error(e);
+      setSaveMsg(es ? "Error al reiniciar la bóveda." : "Error resetting vault.");
+    }
+    setResetting(false);
   }
 
   useEffect(() => {
@@ -524,7 +571,7 @@ function VaultTab({
     if(!password){setSaveMsg(es?"Inicia sesión de nuevo para cifrar tu bóveda.":"Sign in again to encrypt your vault.");return;}
     setSaving(true);setSaveMsg("");
     try{
-      const { deriveKey, generateSalt, encryptData, createHeirPackage, encryptFile, bufferToBase64 } = await import("./lib/crypto");
+      const { deriveKey, generateSalt, encryptData, createHeirPackage, encryptFile, bufferToBase64, base64ToBuffer } = await import("./lib/crypto");
       
       let saltStr = vault?.payload_salt;
       let activeKey = derivedKey;
@@ -534,7 +581,7 @@ function VaultTab({
           const newSalt = generateSalt();
           saltStr = bufferToBase64(newSalt.buffer);
         }
-        activeKey = await deriveKey(password, saltStr);
+        activeKey = await deriveKey(password, base64ToBuffer(saltStr));
         setDerivedKey(activeKey);
       }
 
@@ -738,6 +785,19 @@ function VaultTab({
             {unlocking?<><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>{es?"Descifrando...":"Decrypting..."}</>:<><Unlock size={16}/>{es?"Desbloquear Bóveda":"Unlock Vault"}</>}
           </button>
           {saveMsg&&<p style={{textAlign:"center",fontSize:13,fontFamily:"sans-serif",color:"#e06060",marginTop:14,marginBottom:0}}>{saveMsg}</p>}
+          {showReset && (
+            <div style={{marginTop:20,paddingTop:20,borderTop:"1px solid rgba(180,160,120,0.1)",maxWidth:400,margin:"20px auto 0"}}>
+              <p style={{fontSize:12,color:"#6a6058",fontFamily:"sans-serif",lineHeight:1.5,margin:"0 0 12px"}}>
+                {es
+                  ? "¿No puedes acceder? Reinicia la bóveda para empezar de cero con tu contraseña de cuenta. Se perderá el contenido cifrado anterior."
+                  : "Can't access your vault? Reset it to start fresh with your account password. Previous encrypted content will be lost."}
+              </p>
+              <button onClick={handleResetVault} disabled={resetting||!password}
+                style={{padding:"10px 20px",background:"transparent",color:"#e06060",border:"1px solid rgba(220,60,60,0.3)",borderRadius:8,fontSize:13,cursor:"pointer",fontFamily:"sans-serif",opacity:(resetting||!password)?0.6:1}}>
+                {resetting ? (es ? "Reiniciando..." : "Resetting...") : (es ? "Reiniciar bóveda" : "Reset vault")}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );

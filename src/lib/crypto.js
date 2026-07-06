@@ -131,6 +131,26 @@ export async function decryptVaultPayload(encryptedPayload, saltBase64, masterPa
   return JSON.parse(text);
 }
 
+/**
+ * Try decrypting with correct salt encoding, then legacy encoding (base64 string as UTF-8).
+ * Older saves derived the key from the base64 salt text instead of decoded bytes.
+ * Returns { payload, key }.
+ */
+export async function decryptVaultPayloadWithFallback(encryptedPayload, saltBase64, password) {
+  const salt = base64ToBuffer(saltBase64);
+  try {
+    const key = await deriveKey(password, salt);
+    const decrypted = await decryptData(encryptedPayload, key);
+    const text = new TextDecoder().decode(decrypted);
+    return { payload: JSON.parse(text), key };
+  } catch {
+    const legacyKey = await deriveKey(password, saltBase64);
+    const decrypted = await decryptData(encryptedPayload, legacyKey);
+    const text = new TextDecoder().decode(decrypted);
+    return { payload: JSON.parse(text), key: legacyKey };
+  }
+}
+
 // ─── Heir Package ─────────────────────────────────────────────────
 
 /**
