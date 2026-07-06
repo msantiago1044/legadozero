@@ -69,6 +69,7 @@ export function useAuth() {
     localStorage.removeItem("lz_token");
     localStorage.removeItem("lz_user");
     localStorage.removeItem("lz_alert_level");
+    sessionStorage.removeItem("lz_account_pass");
     setUser(null);
   }
 

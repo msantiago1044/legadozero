@@ -95,7 +95,8 @@ export default function AuthPage({ onBack, onAuth, lang }) {
               body: JSON.stringify({ p_email: email }),
             });
           } catch { /* vault creation optional at this stage */ }
-          onAuth(data.user);
+          sessionStorage.setItem("lz_account_pass", password);
+          onAuth(data.user, password);
           return;
         }
 
@@ -123,7 +124,8 @@ export default function AuthPage({ onBack, onAuth, lang }) {
       if (data.access_token) {
         localStorage.setItem("lz_token", data.access_token);
         localStorage.setItem("lz_user", JSON.stringify(data.user));
-        onAuth(data.user);
+        sessionStorage.setItem("lz_account_pass", password);
+        onAuth(data.user, password);
       } else {
         const errMap = {
           "Invalid login credentials": es?"Correo o contraseña incorrectos":"Invalid email or password",

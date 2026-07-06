@@ -184,14 +184,16 @@ function MainApp({ lang }) {
     }
   }, []);
 
-  function handleAuth(u) {
+  function handleAuth(u, accountPassword) {
     setUser(u);
+    if (accountPassword) sessionStorage.setItem("lz_account_pass", accountPassword);
     setScreen(ADMIN_EMAILS.includes(u?.email?.toLowerCase()) ? "admin" : "dashboard");
     document.title = "🔒 LegadoZero | Bóveda Activa & Asegurada";
   }
 
   function handleSignOut() {
     ["lz_token","lz_user","lz_alert_level"].forEach(k=>localStorage.removeItem(k));
+    sessionStorage.removeItem("lz_account_pass");
     setUser(null);
     setScreen("landing");
   }
@@ -230,7 +232,7 @@ function Dashboard({ user, lang, onSignOut }) {
   // Lifted vault state to prevent unmount loss when switching tabs
   const [decryptedTestament, setDecryptedTestament] = useState("");
   const [decryptedFiles, setDecryptedFiles] = useState([]);
-  const [vaultPassword, setVaultPassword] = useState("");
+  const [vaultPassword, setVaultPassword] = useState(() => sessionStorage.getItem("lz_account_pass") || "");
   const [derivedKey, setDerivedKey] = useState(null);
   const [isVaultLocked, setIsVaultLocked] = useState(true);
 
@@ -241,6 +243,11 @@ function Dashboard({ user, lang, onSignOut }) {
       setIsVaultLocked(!!vault.encrypted_payload && !!vault.payload_salt && !derivedKey);
     }
   }, [vault, derivedKey]);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem("lz_account_pass");
+    if (stored && !vaultPassword) setVaultPassword(stored);
+  }, [vaultPassword]);
 
   // Load vault once on mount (not on tab change)
   useEffect(() => { loadVault(); }, [IS_DEMO ? demoState : undefined]);
@@ -450,14 +457,15 @@ function VaultTab({
   const [glmLoading,  setGlmLoading]  = useState(false);
   const [unlocking,   setUnlocking]   = useState(false);
   const [filesToDelete, setFilesToDelete] = useState([]);
+  const autoUnlockRef = useRef(false);
 
   const storageUsed = vault?.storage_used_bytes || 0;
   const pct = Math.min(100,(storageUsed/STORAGE_LIMIT)*100);
 
-  async function handleUnlock() {
-    if (!password) {
-      setSaveMsg(es ? "Ingresa tu contraseña maestra." : "Enter your master password.");
-      return;
+  async function unlockWithPassword(pass) {
+    if (!pass) {
+      setSaveMsg(es ? "Ingresa la contraseña de tu cuenta." : "Enter your account password.");
+      return false;
     }
     setUnlocking(true);
     setSaveMsg("");
@@ -465,21 +473,36 @@ function VaultTab({
       const { deriveKey, decryptVaultPayload } = await import("./lib/crypto");
       const salt = vault.payload_salt;
       if (!salt) throw new Error("No salt found in vault");
-      
-      const decrypted = await decryptVaultPayload(vault.encrypted_payload, salt, password);
-      const key = await deriveKey(password, salt);
-      
+
+      const decrypted = await decryptVaultPayload(vault.encrypted_payload, salt, pass);
+      const key = await deriveKey(pass, salt);
+
       setTestament(decrypted.testament || "");
       setFiles(decrypted.files || []);
       setDerivedKey(key);
       setIsLocked(false);
       setSaveMsg(es ? "✓ Bóveda desbloqueada." : "✓ Vault unlocked.");
+      return true;
     } catch (e) {
       console.error(e);
-      setSaveMsg(es ? "Contraseña incorrecta." : "Incorrect password.");
+      setSaveMsg(es ? "Contraseña incorrecta. Usa la misma contraseña con la que inicias sesión." : "Incorrect password. Use the same password you use to sign in.");
+      autoUnlockRef.current = false;
+      return false;
+    } finally {
+      setUnlocking(false);
     }
-    setUnlocking(false);
   }
+
+  async function handleUnlock() {
+    await unlockWithPassword(password);
+  }
+
+  useEffect(() => {
+    if (autoUnlockRef.current || !isLocked || !password) return;
+    if (!vault?.encrypted_payload || !vault?.payload_salt) return;
+    autoUnlockRef.current = true;
+    unlockWithPassword(password);
+  }, [isLocked, password, vault?.encrypted_payload, vault?.payload_salt]);
 
   async function handleFiles(e){
     const picked=[...(e.dataTransfer?.files||e.target.files||[])];
@@ -498,7 +521,7 @@ function VaultTab({
   }
 
   async function handleSave(){
-    if(!password){setSaveMsg(es?"Ingresa tu contraseña maestra.":"Enter your master password.");return;}
+    if(!password){setSaveMsg(es?"Inicia sesión de nuevo para cifrar tu bóveda.":"Sign in again to encrypt your vault.");return;}
     setSaving(true);setSaveMsg("");
     try{
       const { deriveKey, generateSalt, encryptData, createHeirPackage, encryptFile, bufferToBase64 } = await import("./lib/crypto");
@@ -684,19 +707,30 @@ function VaultTab({
 
   // If vault is locked, show the lock screen
   if (isLocked) {
+    if (unlocking && password) {
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:20}}>
+          <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:48,textAlign:"center"}}>
+            <Loader2 size={32} color={gold} style={{animation:"spin 1s linear infinite",margin:"0 auto 16px",display:"block"}}/>
+            <p style={{fontSize:14,color:"#8a7868",fontFamily:"sans-serif",margin:0}}>{es?"Descifrando tu bóveda...":"Decrypting your vault..."}</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{display:"flex",flexDirection:"column",gap:20}}>
         <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:24,textAlign:"center"}}>
           <div style={{width:52,height:52,background:"rgba(200,152,42,0.1)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Lock size={24} color={gold}/></div>
           <h3 style={{fontSize:18,fontWeight:400,color:"#f0ece4",margin:"0 0 8px"}}>{es?"Bóveda Cifrada y Bloqueada":"Vault Encrypted and Locked"}</h3>
           <p style={{fontSize:13,color:"#8a7868",fontFamily:"sans-serif",maxWidth:400,margin:"0 auto 20px",lineHeight:1.5}}>
-            {es?"Esta bóveda está protegida con cifrado de conocimiento cero. Introduce tu contraseña maestra para descifrar y ver tus voluntades y archivos.":"This vault is protected with zero-knowledge encryption. Enter your master password to decrypt and view your wishes and files."}
+            {es?"Tu bóveda está protegida con cifrado de conocimiento cero. Introduce la contraseña de tu cuenta para descifrar y ver tus voluntades y archivos.":"Your vault is protected with zero-knowledge encryption. Enter your account password to decrypt and view your wishes and files."}
           </p>
           <div style={{position:"relative",maxWidth:360,margin:"0 auto 16px"}}>
-            <input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)}
-              placeholder={es?"Clave Maestra":"Master Password"}
+            <input type={showPass?"text":"password"} value={password} onChange={e=>{ setPassword(e.target.value); sessionStorage.setItem("lz_account_pass", e.target.value); }}
+              placeholder={es?"Contraseña de la cuenta":"Account password"}
               style={{...inp,paddingRight:44}}
-              onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
+              onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}
+              onKeyDown={e=>e.key==="Enter"&&handleUnlock()}/>
             <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6a6058",cursor:"pointer"}}>{showPass?<EyeOff size={16}/>:<Eye size={16}/>}</button>
           </div>
           <button onClick={handleUnlock} disabled={unlocking||!password}
@@ -720,19 +754,6 @@ function VaultTab({
         <div style={{height:4,background:"rgba(255,255,255,0.06)",borderRadius:2,overflow:"hidden"}}>
           <div style={{height:"100%",width:`${pct}%`,background:pct>90?"#e06060":pct>70?gold:"#5cb890",borderRadius:2,transition:"width 0.4s"}}/>
         </div>
-      </div>
-
-      {/* Password */}
-      <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(180,160,120,0.1)",borderRadius:12,padding:20}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}><Lock size={14} color={gold}/><span style={{fontSize:14,color:"#e8e0d0",fontFamily:"sans-serif"}}>{es?"Contraseña Maestra":"Master Password"}</span></div>
-        <div style={{position:"relative"}}>
-          <input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)}
-            placeholder={es?"Clave para cifrar localmente":"Key to encrypt locally"}
-            style={{...inp,paddingRight:44}}
-            onFocus={e=>e.target.style.borderColor=gold} onBlur={e=>e.target.style.borderColor="rgba(180,160,120,0.15)"}/>
-          <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#6a6058",cursor:"pointer"}}>{showPass?<EyeOff size={16}/>:<Eye size={16}/>}</button>
-        </div>
-        <p style={{fontSize:11,color:"#4a4038",fontFamily:"sans-serif",margin:"8px 0 0"}}>🔒 {es?"Tu contraseña nunca se transmite. Usa la misma clave para seguir añadiendo archivos o testamento.":"Your password is never transmitted. Use the same key to keep adding files or testament."}</p>
       </div>
 
       {/* Dropzone */}
